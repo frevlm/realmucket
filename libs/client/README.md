@@ -15,7 +15,7 @@ auto client = rmk::Client::connect(o);
 if (!client) { /* client.error() */ }
 ```
 
-Access control is done by k8s; inside a cluster the Gateway does not authenticate callers.
+Access control is left to the network (NetworkPolicy, mesh, firewall); the Gateway does not authenticate callers.
 `o.insecure = true` selects plaintext (development only).
 
 ## Put and get

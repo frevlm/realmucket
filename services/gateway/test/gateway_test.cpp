@@ -203,6 +203,7 @@ protected:
         writer_options.writers_per_policy = 2;
         deps.writer = std::make_shared<rmk::rpc::ChunkWriter>(cluster, channels, writer_options);
         deps.reader = std::make_shared<rmk::rpc::ChunkReader>(cluster, channels);
+        deps.garbage = cluster;
         auto created = rmk::gateway::Gateway::create(options, std::move(deps));
         ASSERT_TRUE(created.has_value()) << created.error().message;
         gateway = std::move(*created);
@@ -266,7 +267,7 @@ protected:
         fs::create_directories(n.dir);
         rmk::datanode::Options options;
         options.identity.id = n.id;
-        options.identity.k8s_node = "k8s-" + std::to_string(i);
+        options.identity.host = "host-" + std::to_string(i);
         options.identity.address = "unbound";  // replaced below, once the port is known
         options.identity.capacity_bytes = std::uint64_t{1} << 30;
         options.data_dir = n.dir;

@@ -16,13 +16,13 @@
 namespace rmk::datanode {
 
 struct Options {
-    NodeInfo identity;  // id, address, k8s_node, zone, capacity_bytes (0 = filesystem size)
+    NodeInfo identity;  // id, address, host, zone, capacity_bytes (0 = filesystem size)
     std::filesystem::path data_dir;
     std::chrono::seconds heartbeat_interval{10};
 };
 
-// RMK_NODE_ID, RMK_ADVERTISE_ADDRESS, RMK_DATA_DIR, RMK_ZONE, RMK_K8S_NODE,
-// RMK_K8S_ZONE_LOOKUP, RMK_CAPACITY_BYTES (docs/IMPLEMENTATION.md §7).
+// RMK_NODE_ID, RMK_ADVERTISE_ADDRESS, RMK_DATA_DIR, RMK_ZONE, RMK_HOST, RMK_CAPACITY_BYTES
+// (docs/IMPLEMENTATION.md §7).
 Result<Options> load_options(const EnvLookup& env);
 
 // The DataNode gRPC service plus its heartbeat loop. Serves files under data_dir only.

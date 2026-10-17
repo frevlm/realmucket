@@ -31,8 +31,9 @@ struct Options {
 struct Dependencies {
     rpc::Stores stores;
     std::shared_ptr<crypto::KeyProvider> keys;
-    std::shared_ptr<rpc::ChunkWriter> writer;
-    std::shared_ptr<rpc::ChunkReader> reader;
+    std::shared_ptr<ExtentWriter> writer;
+    std::shared_ptr<ExtentReader> reader;
+    std::shared_ptr<GarbageSink> garbage;
 };
 
 // RMK_PART_SIZE,

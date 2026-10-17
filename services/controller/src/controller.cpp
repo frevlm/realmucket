@@ -203,7 +203,7 @@ Topology make_topology(const std::vector<NodeInfo>& list, const Options& options
         if (age >= options.repair_delay)
             t.dead.insert(node.id);
     }
-    // ADR 0005: zone if the healthy nodes span >= 3 zones, else k8s node if >= 3, else node id.
+    // ADR 0005: zone if the healthy nodes span >= 3 zones, else host if >= 3, else node id.
     auto spans_three = [&](std::string NodeInfo::*field) {
         std::set<std::string> values;
         for (const NodeId& id : t.healthy)
@@ -212,7 +212,7 @@ Topology make_topology(const std::vector<NodeInfo>& list, const Options& options
         return values.size() >= 3;
     };
     std::string NodeInfo::*field = spans_three(&NodeInfo::zone)       ? &NodeInfo::zone
-                                   : spans_three(&NodeInfo::k8s_node) ? &NodeInfo::k8s_node
+                                   : spans_three(&NodeInfo::host) ? &NodeInfo::host
                                                                       : &NodeInfo::id;
     for (const auto& [id, node] : t.nodes)
         t.domain[id] = node.*field;

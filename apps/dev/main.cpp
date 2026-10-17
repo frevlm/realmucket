@@ -183,7 +183,7 @@ int run(const Flags& flags) {
         options.identity.id = id;
         options.identity.address = "127.0.0.1:" + std::to_string(free_port());
         options.identity.zone = "z" + std::to_string(i % kZones + 1);
-        options.identity.k8s_node = "dev";
+        options.identity.host = "dev";
         options.data_dir = dir;
         const std::string address = options.identity.address;
         auto created = rmk::datanode::Node::create(std::move(options), cluster, channels);
@@ -233,6 +233,7 @@ int run(const Flags& flags) {
     gateway_deps.keys = keys;
     gateway_deps.writer = std::make_shared<rmk::rpc::ChunkWriter>(cluster, channels, writer_options);
     gateway_deps.reader = std::make_shared<rmk::rpc::ChunkReader>(cluster, channels);
+    gateway_deps.garbage = cluster;
     auto gateway = rmk::gateway::Gateway::create(gateway_options, std::move(gateway_deps));
     if (!gateway)
         return fatal("create gateway", gateway.error());

@@ -295,7 +295,7 @@ struct Gateway::Impl final : pb::Storage::Service {
 
     // Bytes written to a Chunk that no Object will reference (§6 safety rule 9).
     void discard(const Extent& extent) {
-        if (auto ok = deps.stores.cluster->add_garbage(extent.chunk_id, extent.length); !ok)
+        if (auto ok = deps.garbage->add_garbage(extent.chunk_id, extent.length); !ok)
             log_line("error", "cannot report " + std::to_string(extent.length) + " garbage bytes in chunk " +
                                   std::to_string(extent.chunk_id) + ": " + ok.error().message);
     }
@@ -765,8 +765,8 @@ struct Gateway::Impl final : pb::Storage::Service {
 };
 
 Result<std::unique_ptr<Gateway>> Gateway::create(Options options, Dependencies deps) {
-    if (!deps.stores.meta || !deps.stores.config || !deps.stores.cluster || !deps.keys || !deps.writer ||
-        !deps.reader)
+    if (!deps.stores.meta || !deps.stores.config || !deps.keys || !deps.writer ||
+        !deps.reader || !deps.garbage)
         return fail(Errc::invalid_argument, "gateway: missing dependency");
     if (options.max_part_bytes == 0 || options.max_buffered_bytes < options.max_part_bytes)
         return fail(Errc::invalid_argument, "gateway: max_buffered_bytes must hold at least one max_part_bytes part");

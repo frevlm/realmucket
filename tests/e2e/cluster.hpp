@@ -154,6 +154,7 @@ protected:
         deps.keys = keys;
         deps.writer = std::make_shared<rpc::ChunkWriter>(cluster, channels, wo);
         deps.reader = std::make_shared<rpc::ChunkReader>(cluster, channels);
+        deps.garbage = cluster;
         auto gw = gateway::Gateway::create(go, std::move(deps));
         ASSERT_TRUE(gw.has_value()) << gw.error().message;
         gateway = std::move(*gw);
@@ -254,7 +255,7 @@ protected:
         datanode::Options options;
         options.identity.id = n.id;
         options.identity.zone = "z" + std::to_string(i % 3 + 1);
-        options.identity.k8s_node = "host-" + std::to_string(i);
+        options.identity.host = "host-" + std::to_string(i);
         options.identity.address = "127.0.0.1:" + std::to_string(free_port());
         options.identity.capacity_bytes = std::uint64_t{1} << 30;
         options.data_dir = n.dir;

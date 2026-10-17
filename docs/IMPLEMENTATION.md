@@ -244,7 +244,11 @@ inside one process (`rmk-dev`).
 | `RMK_WRITERS_PER_POLICY` | gateway | 4 |
 | `RMK_WRITER_LEASE_SECONDS` | gateway, controller | 30 |
 | `RMK_NODE_ID`, `RMK_ADVERTISE_ADDRESS`, `RMK_DATA_DIR` | datanode | required |
-| `RMK_ZONE`, `RMK_K8S_NODE` | datanode | empty; with `RMK_K8S_ZONE_LOOKUP=true` the zone is read from the k8s Node label `topology.kubernetes.io/zone` |
+| `RMK_ZONE`, `RMK_HOST` | datanode | empty; the failure domains reported in the heartbeat, supplied by whoever deploys the node |
+| `RMK_DATA_DIR`, `RMK_MASTER_KEY_DIR` | realmucketd | required; chunk files go to `<RMK_DATA_DIR>/chunks`, Master Keys are read from the directory |
+| `RMK_META_DIR` | realmucketd | `<RMK_DATA_DIR>/meta`; the RocksDB database with all object metadata (docs/metadata-store.md) |
+| `RMK_LISTEN`, `RMK_METRICS_PORT`, `RMK_CHUNK_CAPACITY_BYTES` | realmucketd | `0.0.0.0:7000`, `9100`, 1 GiB; a Part plus encryption overhead must fit in one chunk |
+| `RMK_MAINTENANCE_INTERVAL_SECONDS`, `RMK_COMPACTION_GARBAGE_PERCENT`, `RMK_COMPACTION_BYTES_PER_SECOND`, `RMK_REWRAP_BATCH` | realmucketd | `5`, `50`, 50 MiB, `1000`; the housekeeping thread (garbage, expired uploads, compaction, Master Key rewrap). Compaction also honours `RMK_COMPACTION_GRACE_SECONDS` |
 | `RMK_CAPACITY_BYTES` | datanode | 0 = size of the filesystem |
 | `RMK_CHUNK_CAPACITY_BYTES` | controller | 1 GiB |
 | `RMK_PENDING_UPLOAD_RETENTION_SECONDS` | gateway | 7 days |

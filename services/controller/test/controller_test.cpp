@@ -204,12 +204,12 @@ protected:
         std::filesystem::remove_all(root);
     }
 
-    void add_nodes(const std::vector<std::pair<std::string, std::string>>& zones_and_k8s) {
-        for (const auto& [zone, k8s] : zones_and_k8s) {
+    void add_nodes(const std::vector<std::pair<std::string, std::string>>& zones_and_hosts) {
+        for (const auto& [zone, host] : zones_and_hosts) {
             TestNode n;
             n.info.id = "node-" + std::to_string(nodes.size());
             n.info.zone = zone;
-            n.info.k8s_node = k8s;
+            n.info.host = host;
             n.info.capacity_bytes = std::uint64_t{1} << 30;
             datanode::Options options;
             options.identity = n.info;
@@ -570,12 +570,12 @@ TEST_F(ControllerTest, PoolPlacesThreeReplicasInDistinctZones) {
     EXPECT_EQ(pass(*c).chunks_created, 0u);  // the pool is full
 }
 
-TEST_F(ControllerTest, PoolFallsBackToK8sNodesWhenZonesAreFewerThanThree) {
+TEST_F(ControllerTest, PoolFallsBackToHostsWhenZonesAreFewerThanThree) {
     add_nodes({{"a", "k0"}, {"a", "k0"}, {"a", "k1"}, {"b", "k1"}, {"b", "k2"}, {"b", "k2"}});
     auto c = make(options());
     EXPECT_EQ(pass(*c).chunks_created, 2u);
     for (const ChunkInfo& chunk : chunks(ChunkState::open))
-        EXPECT_EQ(domains(chunk, &NodeInfo::k8s_node).size(), 3u);
+        EXPECT_EQ(domains(chunk, &NodeInfo::host).size(), 3u);
 }
 
 TEST_F(ControllerTest, PoolFallsBackToNodeIdsWithoutTopology) {

@@ -93,6 +93,7 @@ int main() {
     deps.keys = keys;
     deps.writer = std::make_shared<rpc::ChunkWriter>(stores.cluster, channels, writer_options);
     deps.reader = std::make_shared<rpc::ChunkReader>(stores.cluster, channels);
+    deps.garbage = stores.cluster;
     std::unique_ptr<gateway::Gateway> service = must(gateway::Gateway::create(options, std::move(deps)), "gateway");
 
     auto metrics = must(metrics::serve(static_cast<std::uint16_t>(metrics_port)), "metrics endpoint");
