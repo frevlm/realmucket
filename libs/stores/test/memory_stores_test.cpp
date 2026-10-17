@@ -9,8 +9,7 @@
 namespace {
 
 rmk::contract::StoreSet make_memory_stores(std::chrono::seconds retention) {
-    return {std::make_shared<rmk::MemoryMetaStore>(retention), std::make_shared<rmk::MemoryConfigStore>(),
-            std::make_shared<rmk::MemoryClusterStore>()};
+    return {std::make_shared<rmk::MemoryMetaStore>(retention), std::make_shared<rmk::MemoryConfigStore>()};
 }
 
 TEST(MemoryStores, FactoryReturnsIndependentStores) {

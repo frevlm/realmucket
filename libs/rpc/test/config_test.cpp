@@ -7,7 +7,6 @@
 #include <map>
 #include <string>
 
-#include "rmk/datanode/datanode.hpp"
 #include "rmk/rpc/rpc.hpp"
 
 namespace rmk {
@@ -87,60 +86,6 @@ TEST(Tls, CertificateFilesMustBeReadable) {
     ASSERT_FALSE(missing);
     EXPECT_EQ(missing.error().code, Errc::invalid_argument);
     std::filesystem::remove_all(dir);
-}
-
-TEST(Channels, OneChannelPerAddress) {
-    rpc::Channels channels(rpc::TlsConfig{.insecure = true, .cert_file = {}, .key_file = {}, .ca_file = {}});
-    auto a = channels.get("127.0.0.1:1");
-    EXPECT_EQ(a, channels.get("127.0.0.1:1"));
-    EXPECT_NE(a, channels.get("127.0.0.1:2"));
-}
-
-TEST(Stores, InMemoryWithoutClusterFile) {
-    auto stores = rpc::open_stores(env_of({}), std::chrono::hours(1));
-    ASSERT_TRUE(stores);
-    EXPECT_NE(stores->meta, nullptr);
-    EXPECT_NE(stores->config, nullptr);
-    EXPECT_NE(stores->cluster, nullptr);
-}
-
-#ifndef RMK_HAVE_FDB
-TEST(Stores, ClusterFileNeedsFoundationDb) {
-    auto stores = rpc::open_stores(env_of({{"RMK_FDB_CLUSTER_FILE", "/etc/fdb.cluster"}}), std::chrono::hours(1));
-    ASSERT_FALSE(stores);
-    EXPECT_EQ(stores.error().code, Errc::invalid_argument);
-}
-#endif
-
-TEST(DataNodeOptions, ReadsTheEnvironment) {
-    auto options = datanode::load_options(env_of({{"RMK_NODE_ID", "dn-0"},
-                                                  {"RMK_ADVERTISE_ADDRESS", "dn-0.dn:7001"},
-                                                  {"RMK_DATA_DIR", "/data"},
-                                                  {"RMK_ZONE", "z1"},
-                                                  {"RMK_HOST", "worker-3"},
-                                                  {"RMK_CAPACITY_BYTES", "1000000"}}));
-    ASSERT_TRUE(options) << options.error().message;
-    EXPECT_EQ(options->identity.id, "dn-0");
-    EXPECT_EQ(options->identity.address, "dn-0.dn:7001");
-    EXPECT_EQ(options->data_dir, "/data");
-    EXPECT_EQ(options->identity.zone, "z1");
-    EXPECT_EQ(options->identity.host, "worker-3");
-    EXPECT_EQ(options->identity.capacity_bytes, 1000000u);
-}
-
-TEST(DataNodeOptions, RejectsMissingOrInvalidValues) {
-    std::map<std::string, std::string> base{
-        {"RMK_NODE_ID", "dn-0"}, {"RMK_ADVERTISE_ADDRESS", "a:1"}, {"RMK_DATA_DIR", "/data"}};
-    for (const char* required : {"RMK_NODE_ID", "RMK_ADVERTISE_ADDRESS", "RMK_DATA_DIR"}) {
-        auto vars = base;
-        vars.erase(required);
-        auto options = datanode::load_options(env_of(vars));
-        ASSERT_FALSE(options) << required;
-        EXPECT_EQ(options.error().code, Errc::invalid_argument);
-    }
-    auto bad_capacity = base;
-    bad_capacity["RMK_CAPACITY_BYTES"] = "lots";
-    EXPECT_EQ(datanode::load_options(env_of(bad_capacity)).error().code, Errc::invalid_argument);
 }
 
 }  // namespace

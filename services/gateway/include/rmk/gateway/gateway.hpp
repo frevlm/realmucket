@@ -10,6 +10,7 @@
 
 #include "rmk/crypto/crypto.hpp"
 #include "rmk/core/env.hpp"
+#include "rmk/core/extent_io.hpp"
 #include "rmk/rpc/rpc.hpp"
 
 namespace rmk::gateway {

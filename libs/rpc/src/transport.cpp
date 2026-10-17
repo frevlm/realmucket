@@ -8,9 +8,6 @@
 namespace rmk::rpc {
 namespace {
 
-// Room for a 1 MiB data message plus framing, and for any unary reply.
-constexpr int kMaxMessageBytes = 32 << 20;
-
 Result<std::string> read_file(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in)
@@ -58,9 +55,7 @@ std::shared_ptr<grpc::ServerCredentials> server_credentials(const TlsConfig& tls
     auto key = read_file(tls.key_file);
     if (!cert || !key)
         return nullptr;
-    // Internal callers present certificates signed by RMK_TLS_CA (§6 safety rule 4). They are
-    // requested and verified here; services that must only serve components (the Data Node)
-    // additionally refuse peers without one. External clients of the Gateway present none.
+    // With RMK_TLS_CA set, a client certificate is requested and verified when one is presented.
     grpc::SslServerCredentialsOptions options(
         tls.ca_file.empty() ? GRPC_SSL_DONT_REQUEST_CLIENT_CERTIFICATE : GRPC_SSL_REQUEST_CLIENT_CERTIFICATE_AND_VERIFY);
     options.pem_key_cert_pairs.push_back({*key, *cert});
@@ -71,36 +66,6 @@ std::shared_ptr<grpc::ServerCredentials> server_credentials(const TlsConfig& tls
         options.pem_root_certs = *ca;
     }
     return grpc::SslServerCredentials(options);
-}
-
-Channels::Channels(TlsConfig tls) : tls_(std::move(tls)) {}
-
-std::shared_ptr<grpc::Channel> Channels::get(const std::string& address) {
-    std::lock_guard lock(mu_);
-    for (const auto& [addr, channel] : channels_)
-        if (addr == address)
-            return channel;
-
-    std::shared_ptr<grpc::ChannelCredentials> creds;
-    if (tls_.insecure) {
-        creds = grpc::InsecureChannelCredentials();
-    } else {
-        grpc::SslCredentialsOptions options;
-        if (!tls_.ca_file.empty())
-            options.pem_root_certs = read_file(tls_.ca_file).value_or("");
-        // Our certificate doubles as the client identity Data Nodes verify.
-        if (!tls_.cert_file.empty() && !tls_.key_file.empty()) {
-            options.pem_cert_chain = read_file(tls_.cert_file).value_or("");
-            options.pem_private_key = read_file(tls_.key_file).value_or("");
-        }
-        creds = grpc::SslCredentials(options);
-    }
-    grpc::ChannelArguments args;
-    args.SetMaxReceiveMessageSize(kMaxMessageBytes);
-    args.SetMaxSendMessageSize(kMaxMessageBytes);
-    auto channel = grpc::CreateCustomChannel(address, creds, args);
-    channels_.emplace_back(address, channel);
-    return channel;
 }
 
 }  // namespace rmk::rpc

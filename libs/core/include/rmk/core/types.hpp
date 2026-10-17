@@ -162,40 +162,4 @@ struct ClusterConfig {
     bool operator==(const ClusterConfig&) const = default;
 };
 
-// ---------------------------------------------------------------------------------------------
-// Cluster topology (ADR 0005, 0009)
-
-struct NodeInfo {
-    NodeId id;               // stable, e.g. the StatefulSet pod name
-    std::string address;     // host:port of its DataNode gRPC service
-    std::string host;        // machine it runs on
-    std::string zone;        // availability zone; may be empty
-    std::uint64_t capacity_bytes = 0;
-    std::uint64_t used_bytes = 0;
-    Clock::time_point last_heartbeat;
-    bool operator==(const NodeInfo&) const = default;
-};
-
-enum class ChunkState : std::uint8_t {
-    open,           // writable by the Gateway holding its writer lease
-    sealed,         // immutable, stored as full replicas
-    erasure_coded,  // immutable, stored as data_units + parity_units shards
-};
-
-struct ChunkInfo {
-    ChunkId id = 0;
-    ChunkState state = ChunkState::open;
-    StoragePolicy target_policy = kReplicated3;  // what a Sealed Chunk should become
-    std::uint8_t data_units = 1;                 // current layout
-    std::uint8_t parity_units = 2;
-    std::vector<NodeId> nodes;  // replicas, or shard i on nodes[i]
-    std::uint64_t capacity = 0;
-    std::uint64_t size = 0;  // logical chunk-file size (header included); final once sealed
-    std::uint64_t garbage_bytes = 0;
-    Clock::time_point sealed_at;  // when it stopped being open; epoch while open
-    std::string writer;  // Gateway holding the writer lease, empty if none
-    Clock::time_point writer_lease_expiry;
-    std::uint64_t revision = 0;  // bumped on every update; used for compare-and-set
-};
-
 }  // namespace rmk

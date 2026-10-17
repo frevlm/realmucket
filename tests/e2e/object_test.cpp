@@ -1,8 +1,9 @@
 // Tenants and the object API, through rmk::client::Client only.
 
+#include <fstream>
 #include <sstream>
 
-#include "e2e/cluster.hpp"
+#include "e2e/fixture.hpp"
 
 namespace rmk::e2e {
 namespace {
@@ -35,7 +36,6 @@ TEST_F(E2E, SmallAndMultipartObjectsRoundTrip) {
     EXPECT_EQ(small_info.size, small.size());
     EXPECT_EQ(small_info.checksum, crc_of(small));
     EXPECT_EQ(take(rec->get(small_at)), small);
-    EXPECT_EQ(stored("rec", "models", "small").parts.size(), 1u);
 
     // Above the 100 KiB threshold the SDK sends 64 KiB Parts, four at a time.
     const std::string big = pattern(5 * 64 * kKiB + 123, 1);
@@ -43,7 +43,6 @@ TEST_F(E2E, SmallAndMultipartObjectsRoundTrip) {
     auto big_info = take(rec->put(big_at, big));
     EXPECT_EQ(big_info.size, big.size());
     EXPECT_EQ(big_info.checksum, crc_of(big));
-    EXPECT_EQ(stored("rec", "models", "big").parts.size(), 6u);
     EXPECT_EQ(take(rec->get(big_at)), big);
     EXPECT_EQ(take(rec->head(big_at)).checksum, crc_of(big));
 
@@ -56,7 +55,6 @@ TEST_F(E2E, SmallAndMultipartObjectsRoundTrip) {
     const rc::Location file_at{"rec", "models", "from-file"};
     auto file_info = take(rec->put_file(file_at, file));
     EXPECT_EQ(file_info.checksum, crc_of(file_content));
-    EXPECT_EQ(stored("rec", "models", "from-file").parts.size(), 8u);
     std::ostringstream streamed;
     take(rec->get(file_at, streamed));
     EXPECT_EQ(streamed.str(), file_content);
@@ -174,7 +172,6 @@ TEST_F(E2E, VersioningKeepsHistoryAndRemoveVersionIsPermanent) {
     // remove_version deletes exactly that version, for good.
     take(rec->remove_version(where, g1));
     expect_error(at(g1), ErrorCode::not_found);
-    EXPECT_FALSE(meta->head_version(ObjectRef{{"rec", "docs"}, "readme"}, g1).has_value());
     EXPECT_EQ(take(rec->list_versions(where)).size(), 2u);
 
     take(rec->remove_version(where, marker));  // dropping the marker brings v2 back

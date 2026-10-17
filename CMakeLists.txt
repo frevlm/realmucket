@@ -9,8 +9,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(RMK_BUILD_TESTS "Build unit tests" ON)
 
 # Native-first: every module builds when its dependencies are present on this machine.
-# Only the FoundationDB store needs libfdb_c; without it everything else still builds and
-# runs against the in-memory stores.
 find_package(Threads REQUIRED)
 find_package(OpenSSL)
 find_package(Protobuf CONFIG)
@@ -18,10 +16,8 @@ if(NOT Protobuf_FOUND)
     find_package(Protobuf)
 endif()
 find_package(gRPC CONFIG)
-find_path(FDB_INCLUDE_DIR foundationdb/fdb_c.h)
 find_library(ROCKSDB_LIB rocksdb)
 find_path(ROCKSDB_INC rocksdb/db.h)
-find_library(FDB_LIBRARY fdb_c)
 
 set(RMK_WARNINGS -Wall -Wextra -Wpedantic -Werror)
 
@@ -50,7 +46,6 @@ endfunction()
 
 rmk_module(rmk_core libs/core Threads::Threads)
 rmk_module(rmk_stores libs/stores rmk_core)
-rmk_module(rmk_ec libs/ec rmk_core)
 rmk_module(rmk_local libs/local rmk_core)
 
 if(OpenSSL_FOUND)
@@ -68,17 +63,8 @@ if(ROCKSDB_LIB AND ROCKSDB_INC)
     endif()
 endif()
 
-if(FDB_INCLUDE_DIR AND FDB_LIBRARY)
-    rmk_module(rmk_fdb libs/fdb rmk_core ${FDB_LIBRARY})
-    if(TARGET rmk_fdb)
-        target_include_directories(rmk_fdb PUBLIC ${FDB_INCLUDE_DIR})
-        target_compile_definitions(rmk_fdb PUBLIC FDB_API_VERSION=730 RMK_HAVE_FDB=1)
-    endif()
-endif()
-
 set(RMK_HAVE_RPC OFF)
-if(gRPC_FOUND AND Protobuf_FOUND AND TARGET rmk_crypto
-   AND TARGET rmk_ec AND TARGET rmk_http)
+if(gRPC_FOUND AND Protobuf_FOUND AND TARGET rmk_crypto AND TARGET rmk_http)
     set(RMK_HAVE_RPC ON)
 endif()
 
@@ -88,7 +74,7 @@ if(RMK_HAVE_RPC)
     file(MAKE_DIRECTORY ${gen_dir})
     get_target_property(grpc_plugin gRPC::grpc_cpp_plugin LOCATION)
     set(proto_sources)
-    foreach(name storage datanode)
+    foreach(name storage)
         set(proto ${proto_dir}/rmk/v1/${name}.proto)
         set(out ${gen_dir}/rmk/v1/${name})
         add_custom_command(
@@ -103,12 +89,8 @@ if(RMK_HAVE_RPC)
     target_include_directories(rmk_proto PUBLIC ${gen_dir})
     target_link_libraries(rmk_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
 
-    # Status mapping, Data Node client (replicated writes, replica/EC reads), store factory.
-    set(store_libs rmk_core rmk_stores)
-    if(TARGET rmk_fdb)
-        list(APPEND store_libs rmk_fdb)
-    endif()
-    rmk_module(rmk_rpc libs/rpc rmk_proto rmk_ec rmk_crypto rmk_http ${store_libs})
+    # Status mapping and transport security.
+    rmk_module(rmk_rpc libs/rpc rmk_proto rmk_core rmk_stores)
 
     # Client SDK: one public header, libs/client/include/rmk/client.hpp.
     file(GLOB client_sources CONFIGURE_DEPENDS libs/client/src/*.cpp)
@@ -123,12 +105,7 @@ if(RMK_HAVE_RPC)
 
     # ----- Services (services/<name>/{include,src,test,main.cpp})
 
-    rmk_module(rmk_datanode_lib services/datanode rmk_rpc rmk_http)
-    rmk_program(rmk-datanode services/datanode/main.cpp rmk_datanode_lib)
     rmk_module(rmk_gateway_lib services/gateway rmk_rpc rmk_crypto rmk_http)
-    rmk_program(rmk-gateway services/gateway/main.cpp rmk_gateway_lib)
-    rmk_module(rmk_controller_lib services/controller rmk_rpc rmk_crypto rmk_http)
-    rmk_program(rmk-controller services/controller/main.cpp rmk_controller_lib)
     if(TARGET rmk_rocksdb)
         rmk_module(rmk_realmucketd_lib services/realmucketd rmk_gateway_lib rmk_local rmk_rocksdb rmk_crypto rmk_http)
         rmk_program(realmucketd services/realmucketd/main.cpp rmk_realmucketd_lib)
@@ -136,9 +113,6 @@ if(RMK_HAVE_RPC)
 
     # ----- Apps (apps/<name>/main.cpp)
 
-    # Everything in one process on in-memory stores: local development without FoundationDB.
-    rmk_program(rmk-dev apps/dev/main.cpp
-        rmk_datanode_lib rmk_gateway_lib rmk_controller_lib)
     rmk_program(rmkctl apps/rmkctl/main.cpp rmk_client)
 
     # Load generator for a running Gateway or realmucketd; not installed.
@@ -213,15 +187,12 @@ if(RMK_BUILD_TESTS)
 
     rmk_tests(core libs/core/test rmk_core)
     rmk_tests(stores libs/stores/test rmk_stores)
-    rmk_tests(ec libs/ec/test rmk_ec)
     rmk_tests(local libs/local/test rmk_local)
     rmk_tests(crypto libs/crypto/test rmk_crypto)
     rmk_tests(http libs/http/test rmk_http)
-    rmk_tests(fdb libs/fdb/test rmk_fdb)
     rmk_tests(rocksdb libs/rocksdb/test rmk_rocksdb)
-    rmk_tests(rpc libs/rpc/test rmk_rpc rmk_datanode_lib)
-    rmk_tests(gateway services/gateway/test rmk_gateway_lib rmk_datanode_lib)
-    rmk_tests(controller services/controller/test rmk_controller_lib rmk_datanode_lib)
+    rmk_tests(rpc libs/rpc/test rmk_rpc)
+    rmk_tests(gateway services/gateway/test rmk_gateway_lib rmk_local rmk_stores)
     rmk_tests(realmucketd services/realmucketd/test rmk_realmucketd_lib rmk_client rmk_stores)
-    rmk_tests(e2e tests/e2e rmk_client rmk_gateway_lib rmk_datanode_lib rmk_controller_lib)
+    rmk_tests(e2e tests/e2e rmk_client rmk_realmucketd_lib)
 endif()

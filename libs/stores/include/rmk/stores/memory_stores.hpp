@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-#include "rmk/core/cluster_store.hpp"
+#include "rmk/core/extent_io.hpp"
 #include "rmk/core/config_store.hpp"
 #include "rmk/core/meta_store.hpp"
 
@@ -88,46 +88,6 @@ public:
 private:
     std::mutex mutex_;
     ClusterConfig config_;
-};
-
-class MemoryClusterStore final : public ClusterStore {
-public:
-    Status heartbeat(const NodeInfo& node, Clock::time_point now) override;
-    Result<std::vector<NodeInfo>> list_nodes() override;
-    Status remove_node(std::string_view id, const std::optional<Fence>& fence = std::nullopt) override;
-
-    Result<ChunkId> allocate_chunk_id() override;
-    Status put_chunk(const ChunkInfo& chunk, const std::optional<Fence>& fence = std::nullopt) override;
-    Result<ChunkInfo> get_chunk(ChunkId id) override;
-    Result<std::vector<ChunkInfo>> list_chunks(std::optional<ChunkState> state,
-                                               std::optional<ChunkId> after,
-                                               std::size_t limit) override;
-    Result<ChunkInfo> update_chunk(const ChunkInfo& next,
-                                   const std::optional<Fence>& fence = std::nullopt) override;
-    Status delete_chunk(ChunkId id, const std::optional<Fence>& fence = std::nullopt) override;
-    Result<ChunkInfo> claim_open_chunk(const StoragePolicy& policy, std::string_view writer,
-                                       std::uint64_t min_free, Clock::time_point lease_until,
-                                       Clock::time_point now) override;
-    Status add_garbage(ChunkId id, std::uint64_t bytes) override;
-
-    Result<std::uint64_t> try_lead(std::string_view holder, std::chrono::seconds ttl,
-                                   Clock::time_point now) override;
-
-private:
-    struct Leader {
-        std::string holder;
-        Clock::time_point expiry;
-        std::uint64_t epoch = 0;
-    };
-
-    std::mutex mutex_;
-    std::map<NodeId, NodeInfo, std::less<>> nodes_;
-    std::map<ChunkId, ChunkInfo> chunks_;
-    ChunkId last_chunk_id_ = 0;
-    // Callers hold mutex_.
-    Status check_fence(const std::optional<Fence>& fence) const;
-
-    std::optional<Leader> leader_;
 };
 
 }  // namespace rmk

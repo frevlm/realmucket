@@ -1,5 +1,9 @@
 # realmucket 分阶段实现计划
 
+> **范围调整（2026-10-17）**：本项目现在只管单台服务器：一个 `realmucketd` 进程，对象字节存本机磁盘，元数据存 RocksDB，
+> 对外是 gRPC 的 S3 式 API。Controller、Data Node、FoundationDB、纠删码、副本放置和 k8s 清单已从本仓库移除，
+> 集群编排放在 `~/realmubernetes`。下文阶段 2–4 里涉及这些的条目是历史记录，当前行为以 `docs/IMPLEMENTATION.md` 为准。
+
 依据 `docs/adr/` 中的 17 份决策和 `CONTEXT.md` 中的术语制定。每个阶段结束时，系统都处于“可以运行、可以验收”的状态，后一阶段只在前一阶段的基础上增加能力，不推翻前一阶段。
 
 ## 阶段 1：核心库与单盘存储引擎

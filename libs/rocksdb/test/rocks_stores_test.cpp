@@ -18,7 +18,7 @@ rmk::contract::StoreSet make_stores(std::chrono::seconds retention) {
     fs::remove_all(dir);
     auto db = rmk::rocks::Database::open({dir, /*sync=*/false});
     if (!db) return {};
-    return {rmk::rocks::make_meta_store(*db, retention), rmk::rocks::make_config_store(*db), nullptr};
+    return {rmk::rocks::make_meta_store(*db, retention), rmk::rocks::make_config_store(*db)};
 }
 
 RMK_INSTANTIATE_STORE_CONTRACT(Rocks, make_stores);

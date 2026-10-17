@@ -6,7 +6,6 @@
 #include <functional>
 #include <memory>
 
-#include "rmk/core/cluster_store.hpp"
 #include "rmk/core/config_store.hpp"
 #include "rmk/core/meta_store.hpp"
 
@@ -17,7 +16,6 @@ namespace rmk::contract {
 struct StoreSet {
     std::shared_ptr<rmk::MetaStore> meta;
     std::shared_ptr<rmk::ConfigStore> config;
-    std::shared_ptr<rmk::ClusterStore> cluster;
 };
 
 using StoreFactory = std::function<StoreSet(std::chrono::seconds pending_upload_retention)>;

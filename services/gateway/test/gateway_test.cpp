@@ -1,5 +1,5 @@
-// The Gateway end to end inside one process: in-memory stores, three Data Nodes on loopback,
-// a hand-made open-Chunk pool (no Controller here) and a raw rmk.v1.Storage stub as client.
+// The Gateway end to end inside one process: in-memory metadata stores, a local ChunkStore
+// in a temporary directory and a raw rmk.v1.Storage stub as client.
 
 #include "rmk/gateway/gateway.hpp"
 
@@ -23,10 +23,9 @@
 
 #include "rmk/core/chunk_file.hpp"
 #include "rmk/core/crc32c.hpp"
-#include "rmk/datanode/datanode.hpp"
+#include "rmk/local/chunk_store.hpp"
 #include "rmk/http/http.hpp"
 #include "rmk/stores/memory_stores.hpp"
-#include "rmk/v1/datanode.grpc.pb.h"
 #include "rmk/v1/storage.grpc.pb.h"
 
 namespace {
@@ -37,8 +36,6 @@ using grpc::StatusCode;
 
 constexpr std::uint64_t kPartSize = 64 << 10;
 constexpr std::uint64_t kChunkCapacity = 8 << 20;
-constexpr int kNodes = 3;
-constexpr int kChunks = 6;
 
 std::string random_text(std::size_t n, unsigned seed) {
     std::mt19937 rng(seed);
@@ -148,24 +145,12 @@ private:
     std::shared_ptr<rmk::MetaStore> inner_;
 };
 
-// ----- One Data Node serving a temporary directory on 127.0.0.1.
-
-struct DataNode {
-    std::unique_ptr<rmk::datanode::Node> node;
-    std::unique_ptr<grpc::Server> server;
-    std::string id;
-    std::string address;
-    fs::path dir;
-};
-
 class GatewayTest : public ::testing::Test {
 protected:
     fs::path root;
     std::shared_ptr<rmk::MemoryMetaStore> meta = std::make_shared<rmk::MemoryMetaStore>(std::chrono::hours{1});
     std::shared_ptr<rmk::MemoryConfigStore> config = std::make_shared<rmk::MemoryConfigStore>();
-    std::shared_ptr<rmk::MemoryClusterStore> cluster = std::make_shared<rmk::MemoryClusterStore>();
-    std::shared_ptr<rmk::rpc::Channels> channels;
-    std::vector<DataNode> nodes;
+    std::shared_ptr<rmk::local::ChunkStore> chunks;
     rmk::gateway::Options options;
     std::shared_ptr<rmk::MetaStore> gateway_meta;  // what the Gateway sees; null: `meta` itself
     std::unique_ptr<rmk::gateway::Gateway> gateway;
@@ -176,12 +161,12 @@ protected:
         std::string pattern = (fs::temp_directory_path() / "rmk-gateway-XXXXXX").string();
         ASSERT_NE(mkdtemp(pattern.data()), nullptr);
         root = pattern;
-        rmk::rpc::TlsConfig tls;
-        tls.insecure = true;
-        channels = std::make_shared<rmk::rpc::Channels>(tls);
-
-        for (int i = 0; i < kNodes; ++i) start_node(i);
-        for (int i = 0; i < kChunks; ++i) add_open_chunk();
+        rmk::local::Options local_options;
+        local_options.dir = root;
+        local_options.chunk_capacity = kChunkCapacity;
+        auto opened = rmk::local::ChunkStore::open(local_options);
+        ASSERT_TRUE(opened.has_value()) << opened.error().message;
+        chunks = std::move(*opened);
 
         options.part_size = kPartSize;
         options.cluster_config_cache = std::chrono::seconds{0};
@@ -194,16 +179,13 @@ protected:
 
     void start_gateway() {
         rmk::gateway::Dependencies deps;
-        deps.stores = {gateway_meta ? gateway_meta : meta, config, cluster};
+        deps.stores = {gateway_meta ? gateway_meta : meta, config};
         rmk::crypto::Key master{};
         master[0] = std::byte{42};
         deps.keys = std::make_shared<rmk::crypto::StaticKeyProvider>(std::map<std::uint32_t, rmk::crypto::Key>{{1, master}}, 1);
-        rmk::rpc::WriterOptions writer_options;
-        writer_options.writer_id = "gateway-test";
-        writer_options.writers_per_policy = 2;
-        deps.writer = std::make_shared<rmk::rpc::ChunkWriter>(cluster, channels, writer_options);
-        deps.reader = std::make_shared<rmk::rpc::ChunkReader>(cluster, channels);
-        deps.garbage = cluster;
+        deps.writer = chunks;
+        deps.reader = chunks;
+        deps.garbage = chunks;
         auto created = rmk::gateway::Gateway::create(options, std::move(deps));
         ASSERT_TRUE(created.has_value()) << created.error().message;
         gateway = std::move(*created);
@@ -229,87 +211,22 @@ protected:
 
     std::uint64_t garbage_bytes() {
         std::uint64_t total = 0;
-        auto chunks = cluster->list_chunks(std::nullopt, std::nullopt, 1000);
-        EXPECT_TRUE(chunks.has_value());
-        for (const auto& chunk : *chunks) total += chunk.garbage_bytes;
+        for (const auto& chunk : chunks->chunks()) total += chunk.garbage_bytes;
         return total;
     }
 
     void delete_chunk(rmk::ChunkId id) {
-        for (const auto& n : nodes) {
-            auto dn = rmk::internal::v1::DataNode::NewStub(channels->get(n.address));
-            rmk::internal::v1::FileRef file;
-            file.set_chunk_id(id);
-            rmk::internal::v1::Empty resp;
-            grpc::ClientContext ctx;
-            ASSERT_TRUE(dn->DeleteChunk(&ctx, file, &resp).ok());
-        }
-        ASSERT_TRUE(cluster->delete_chunk(id).has_value());
+        chunks->seal_open();
+        ASSERT_TRUE(chunks->remove(id).has_value());
     }
 
     void TearDown() override {
         if (server) server->Shutdown(std::chrono::system_clock::now());
         server.reset();
         gateway.reset();
-        for (auto& n : nodes) {
-            n.server->Shutdown(std::chrono::system_clock::now());
-            n.server.reset();
-            n.node.reset();
-        }
+        chunks.reset();
         std::error_code ec;
         fs::remove_all(root, ec);
-    }
-
-    void start_node(int i) {
-        DataNode n;
-        n.id = "dn-" + std::to_string(i);
-        n.dir = root / n.id;
-        fs::create_directories(n.dir);
-        rmk::datanode::Options options;
-        options.identity.id = n.id;
-        options.identity.host = "host-" + std::to_string(i);
-        options.identity.address = "unbound";  // replaced below, once the port is known
-        options.identity.capacity_bytes = std::uint64_t{1} << 30;
-        options.data_dir = n.dir;
-        auto node = rmk::datanode::Node::create(options, cluster, channels);
-        ASSERT_TRUE(node.has_value()) << node.error().message;
-        n.node = std::move(*node);
-        grpc::ServerBuilder builder;
-        int port = 0;
-        builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
-        builder.RegisterService(n.node->service());
-        n.server = builder.BuildAndStart();
-        ASSERT_NE(port, 0);
-        n.address = "127.0.0.1:" + std::to_string(port);
-        // The port is only known now, so the membership record is written here.
-        rmk::NodeInfo info = options.identity;
-        info.address = n.address;
-        ASSERT_TRUE(cluster->heartbeat(info, rmk::Clock::now()).has_value());
-        nodes.push_back(std::move(n));
-    }
-
-    // What the Controller would do: a Chunk replicated on every node, registered as open.
-    void add_open_chunk() {
-        auto id = cluster->allocate_chunk_id();
-        ASSERT_TRUE(id.has_value());
-        rmk::ChunkInfo chunk;
-        chunk.id = *id;
-        chunk.capacity = kChunkCapacity;
-        chunk.size = rmk::kChunkHeaderSize;
-        for (const auto& n : nodes) {
-            auto dn = rmk::internal::v1::DataNode::NewStub(channels->get(n.address));
-            rmk::internal::v1::CreateChunkRequest req;
-            req.mutable_file()->set_chunk_id(*id);
-            req.set_capacity(kChunkCapacity);
-            req.set_data_units(1);
-            req.set_parity_units(2);
-            rmk::internal::v1::Empty resp;
-            grpc::ClientContext ctx;
-            auto status = dn->CreateChunk(&ctx, req, &resp);
-            ASSERT_TRUE(status.ok()) << status.error_message();
-            chunk.nodes.push_back(n.id);
-        }
-        ASSERT_TRUE(cluster->put_chunk(chunk).has_value());
     }
 
     // ----- Client helpers.
@@ -418,11 +335,10 @@ protected:
 
     std::string chunk_files_content() {
         std::string all;
-        for (const auto& n : nodes)
-            for (const auto& entry : fs::directory_iterator(n.dir)) {
-                std::ifstream in(entry.path(), std::ios::binary);
-                all.append(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-            }
+        for (const auto& entry : fs::directory_iterator(root / "chunks")) {
+            std::ifstream in(entry.path(), std::ios::binary);
+            all.append(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
         return all;
     }
 };
@@ -546,7 +462,7 @@ TEST_F(GatewayTest, StoredBytesAreCiphertext) {
     auto before = chunk_files_content().size();
     ASSERT_TRUE(put(loc("data", "secret"), plaintext).ok());
     std::string stored = chunk_files_content();
-    EXPECT_GE(stored.size(), before + 3 * plaintext.size());  // three replicas
+    EXPECT_GE(stored.size(), before + plaintext.size());
     EXPECT_EQ(stored.find("PLAINTEXT-MARKER-"), std::string::npos);
     std::string data;
     ASSERT_TRUE(get(loc("data", "secret"), &data).ok());
@@ -821,15 +737,12 @@ TEST_F(GatewayTest, ReadsFollowRelocatedParts) {
     // to another Chunk and deletes the old one.
     auto hooked = std::make_shared<HookedMetaStore>(meta);
     hooked->after_head = [&](const rmk::ObjectMeta& version) {
-        rmk::rpc::WriterOptions mover_options;
-        mover_options.writer_id = "compactor";
-        rmk::rpc::ChunkWriter mover(cluster, channels, mover_options);
-        rmk::rpc::ChunkReader reader(cluster, channels);
+        chunks->seal_open();  // the mover's writes go to a new Chunk
         std::set<rmk::ChunkId> old_chunks;
         for (const auto& part : version.parts) {
-            auto stored = reader.read(part.extent);
+            auto stored = chunks->read(part.extent);
             ASSERT_TRUE(stored.has_value());
-            auto moved = mover.write(rmk::kReplicated3, *stored);
+            auto moved = chunks->write(rmk::kReplicated3, *stored);
             ASSERT_TRUE(moved.has_value()) << moved.error().message;
             ASSERT_NE(moved->chunk_id, part.extent.chunk_id);
             ASSERT_TRUE(meta->relocate_part(version.ref, version.generation, part.number, part.extent, *moved));
@@ -839,8 +752,7 @@ TEST_F(GatewayTest, ReadsFollowRelocatedParts) {
     };
     gateway_meta = hooked;
     restart_gateway();
-    // Written after the restart, so the Gateway's writer still holds the lease on the old Chunk.
-    const std::string content = random_text(kPartSize + 777, 5);  // two Parts
+        const std::string content = random_text(kPartSize + 777, 5);  // two Parts
     ASSERT_TRUE(put(loc("data", "moving"), content).ok());
 
     std::string data;
