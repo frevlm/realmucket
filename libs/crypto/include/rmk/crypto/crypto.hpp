@@ -47,7 +47,7 @@ public:
     virtual std::uint32_t active_id() const = 0;
 };
 
-// Reads a directory mounted from a k8s Secret: one file per Master Key named by its decimal
+// Reads a directory (e.g. a mounted Secret volume): one file per Master Key named by its decimal
 // id holding 64 hex characters (surrounding whitespace ignored), plus a file "active"
 // holding the active id. Any malformed file, or an "active" id without a key, is an error.
 class DirectoryKeyProvider final : public KeyProvider {

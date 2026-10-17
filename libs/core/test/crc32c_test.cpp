@@ -16,6 +16,28 @@ TEST(Crc32c, MatchesStandardCheckValue) {
     EXPECT_EQ(rmk::crc32c(bytes("123456789")), 0xE3069283u);
 }
 
+TEST(Crc32c, InstructionsAndTablesAgreeOnEveryLengthAndAlignment) {
+    std::vector<std::byte> data(8192 + 64);
+    std::uint32_t state = 99;
+    for (auto& b : data) {
+        state = state * 1664525u + 1013904223u;
+        b = static_cast<std::byte>(state >> 24);
+    }
+    std::span<const std::byte> all(data);
+    for (std::uint32_t seed : {0u, 0xDEADBEEFu, 0xFFFFFFFFu})
+        for (std::size_t offset = 0; offset < 16; ++offset)
+            for (std::size_t length : {0, 1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 255, 256, 257,
+                                       1000, 4096, 8191, 8192})
+                ASSERT_EQ(rmk::crc32c(all.subspan(offset, length), seed),
+                          rmk::crc32c_portable(all.subspan(offset, length), seed))
+                    << "offset=" << offset << " length=" << length << " seed=" << seed
+                    << " accelerated=" << rmk::crc32c_accelerated();
+}
+
+TEST(Crc32c, PortableMatchesStandardCheckValue) {
+    EXPECT_EQ(rmk::crc32c_portable(bytes("123456789")), 0xE3069283u);
+}
+
 TEST(Crc32c, ExtendingEqualsWholeInput) {
     std::uint32_t partial = rmk::crc32c(bytes("1234"));
     EXPECT_EQ(rmk::crc32c(bytes("56789"), partial), rmk::crc32c(bytes("123456789")));

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -40,25 +41,32 @@ public:
     ChunkFile& operator=(const ChunkFile&) = delete;
     ~ChunkFile();
 
+    // Single-writer API (replicas, tests): append(), write_at() and read() from one thread at a time.
     Result<Extent> append(std::span<const std::byte> data);
     // Writes at `offset`, which may not lie before the current end; any gap stays a hole.
     // Lets every replica place a write at the offset the single writer chose.
     Result<Extent> write_at(std::uint64_t offset, std::span<const std::byte> data);
-    // Verifies the Extent's crc32c.
+    // Concurrent-writer API: reserve() hands out disjoint ranges of the file, atomically, and
+    // write_reserved() fills one in with no lock held, so writers copy their bytes in parallel.
+    // no_space if the range would pass the capacity. Do not mix with append()/write_at() on one file.
+    // A reserved range whose write never happens (or fails) stays a hole.
+    Result<std::uint64_t> reserve(std::uint64_t length);
+    Result<Extent> write_reserved(std::uint64_t offset, std::span<const std::byte> data);
+    // Verifies the Extent's crc32c. Safe against concurrent write_reserved() of other ranges.
     Result<std::vector<std::byte>> read(const Extent& extent) const;
     // Raw bytes, no checksum (shard ranges, whole-chunk copies).
     Result<std::vector<std::byte>> read_range(std::uint64_t offset, std::uint64_t length) const;
     Status sync();
 
     const ChunkHeader& header() const { return header_; }
-    std::uint64_t size() const { return size_; }
+    std::uint64_t size() const { return size_.load(std::memory_order_acquire); }
 
 private:
     ChunkFile(int fd, ChunkHeader header, std::uint64_t size);
 
     int fd_ = -1;
     ChunkHeader header_;
-    std::uint64_t size_ = 0;
+    std::atomic<std::uint64_t> size_{0};  // end of the data written or reserved so far
 };
 
 }  // namespace rmk

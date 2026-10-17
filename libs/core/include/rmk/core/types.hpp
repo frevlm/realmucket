@@ -168,7 +168,7 @@ struct ClusterConfig {
 struct NodeInfo {
     NodeId id;               // stable, e.g. the StatefulSet pod name
     std::string address;     // host:port of its DataNode gRPC service
-    std::string k8s_node;    // machine it runs on
+    std::string host;        // machine it runs on
     std::string zone;        // availability zone; may be empty
     std::uint64_t capacity_bytes = 0;
     std::uint64_t used_bytes = 0;

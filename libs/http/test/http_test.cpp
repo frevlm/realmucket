@@ -15,8 +15,12 @@
 namespace rmk {
 namespace {
 
-std::string url(const http::Server& s, const std::string& path) {
-    return "http://127.0.0.1:" + std::to_string(s.port()) + path;
+// "GET <path>" against the server; returns the whole reply (status line, headers, body).
+std::string fetch(const http::Server& s, const std::string& path);
+std::string status_line(const std::string& reply) { return reply.substr(0, reply.find("\r\n")); }
+std::string body_of(const std::string& reply) {
+    const auto at = reply.find("\r\n\r\n");
+    return at == std::string::npos ? std::string() : reply.substr(at + 4);
 }
 
 std::string raw_exchange(std::uint16_t port, const std::string& request) {
@@ -35,15 +39,19 @@ std::string raw_exchange(std::uint16_t port, const std::string& request) {
     return out;
 }
 
+std::string fetch(const http::Server& s, const std::string& path) {
+    return raw_exchange(s.port(), "GET " + path + " HTTP/1.1\r\nHost: x\r\n\r\n");
+}
+
 TEST(HttpServer, ServesHandlerAndGet) {
     auto server = http::Server::start(0, [](const http::Request& r) {
         return http::Response{200, "text/plain", r.method + " " + r.path};
     });
     ASSERT_TRUE(server.has_value());
     ASSERT_NE((*server)->port(), 0);
-    auto body = http::get(url(**server, "/a/b?x=1"), {});
-    ASSERT_TRUE(body.has_value()) << body.error().message;
-    EXPECT_EQ(*body, "GET /a/b");
+    const std::string reply = fetch(**server, "/a/b?x=1");
+    EXPECT_EQ(status_line(reply), "HTTP/1.1 200 OK");
+    EXPECT_EQ(body_of(reply), "GET /a/b");
 }
 
 TEST(HttpServer, HandlerExceptionIs500) {
@@ -51,10 +59,7 @@ TEST(HttpServer, HandlerExceptionIs500) {
         throw std::runtime_error("boom");
     });
     ASSERT_TRUE(server.has_value());
-    auto body = http::get(url(**server, "/"), {});
-    ASSERT_FALSE(body.has_value());
-    EXPECT_EQ(body.error().code, Errc::unavailable);
-    EXPECT_NE(body.error().message.find("500"), std::string::npos);
+    EXPECT_EQ(status_line(fetch(**server, "/")).rfind("HTTP/1.1 500", 0), 0u);
 }
 
 TEST(HttpServer, OversizedHeadersAre400) {
@@ -84,86 +89,19 @@ TEST(HttpServer, DestructorReturnsPromptly) {
     EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(2));
 }
 
-TEST(HttpClient, SendsBearerToken) {
-    std::string seen;
-    int lfd = ::socket(AF_INET, SOCK_STREAM, 0);
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    ASSERT_EQ(::bind(lfd, reinterpret_cast<sockaddr*>(&addr), sizeof addr), 0);
-    ASSERT_EQ(::listen(lfd, 1), 0);
-    socklen_t len = sizeof addr;
-    ::getsockname(lfd, reinterpret_cast<sockaddr*>(&addr), &len);
-    std::thread t([&] {
-        int fd = ::accept(lfd, nullptr, nullptr);
-        char buf[2048];
-        ssize_t n = ::recv(fd, buf, sizeof buf, 0);
-        if (n > 0) seen.assign(buf, static_cast<std::size_t>(n));
-        const char reply[] = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
-        ::send(fd, reply, sizeof reply - 1, 0);
-        ::close(fd);
-    });
-    http::GetOptions opt;
-    opt.bearer_token = "tok123";
-    auto r = http::get("http://127.0.0.1:" + std::to_string(ntohs(addr.sin_port)) + "/", opt);
-    t.join();
-    ::close(lfd);
-    ASSERT_TRUE(r.has_value()) << r.error().message;
-    EXPECT_EQ(*r, "ok");
-    EXPECT_NE(seen.find("Authorization: Bearer tok123"), std::string::npos) << seen;
-}
-
-TEST(HttpClient, StatusMapping) {
-    auto server = http::Server::start(0, [](const http::Request& r) {
-        if (r.path == "/401") return http::Response{401, "text/plain", ""};
-        if (r.path == "/403") return http::Response{403, "text/plain", ""};
-        if (r.path == "/404") return http::Response{404, "text/plain", ""};
-        if (r.path == "/400") return http::Response{400, "text/plain", ""};
-        if (r.path == "/503") return http::Response{503, "text/plain", ""};
-        return http::Response{200, "text/plain", "fine"};
-    });
-    ASSERT_TRUE(server.has_value());
-    const std::pair<const char*, Errc> cases[] = {
-        {"/401", Errc::permission_denied}, {"/403", Errc::permission_denied},
-        {"/404", Errc::not_found},         {"/400", Errc::invalid_argument},
-        {"/503", Errc::unavailable},
-    };
-    for (const auto& [path, code] : cases) {
-        auto r = http::get(url(**server, path), {});
-        ASSERT_FALSE(r.has_value()) << path;
-        EXPECT_EQ(r.error().code, code) << path;
-        EXPECT_NE(r.error().message.find(std::string(path + 1)), std::string::npos) << path;
-    }
-}
-
-TEST(HttpClient, TransportErrorIsUnavailable) {
-    std::uint16_t dead_port;
-    {
-        auto server = http::Server::start(0, [](const http::Request&) { return http::Response{}; });
-        ASSERT_TRUE(server.has_value());
-        dead_port = (*server)->port();
-    }
-    auto r = http::get("http://127.0.0.1:" + std::to_string(dead_port) + "/", {});
-    ASSERT_FALSE(r.has_value());
-    EXPECT_EQ(r.error().code, Errc::unavailable);
-}
-
 TEST(Metrics, ServeHealthzAndMetrics) {
     metrics::global().counter("rmk_http_test_total", "Test counter.").inc(3);
     auto server = metrics::serve(0);
     ASSERT_TRUE(server.has_value());
 
-    auto health = http::get(url(**server, "/healthz"), {});
-    ASSERT_TRUE(health.has_value());
-    EXPECT_EQ(*health, "ok");
+    const std::string health = fetch(**server, "/healthz");
+    EXPECT_EQ(status_line(health), "HTTP/1.1 200 OK");
+    EXPECT_EQ(body_of(health), "ok");
 
-    auto text = http::get(url(**server, "/metrics"), {});
-    ASSERT_TRUE(text.has_value());
-    EXPECT_NE(text->find("rmk_http_test_total 3\n"), std::string::npos) << *text;
+    const std::string text = body_of(fetch(**server, "/metrics"));
+    EXPECT_NE(text.find("rmk_http_test_total 3\n"), std::string::npos) << text;
 
-    auto missing = http::get(url(**server, "/nope"), {});
-    ASSERT_FALSE(missing.has_value());
-    EXPECT_EQ(missing.error().code, Errc::not_found);
+    EXPECT_EQ(status_line(fetch(**server, "/nope")).rfind("HTTP/1.1 404", 0), 0u);
 }
 
 // Registry's header declares no constructor/destructor, so a Registry cannot be created outside

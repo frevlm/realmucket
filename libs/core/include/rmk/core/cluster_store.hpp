@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "rmk/core/error.hpp"
+#include "rmk/core/extent_io.hpp"
 #include "rmk/core/types.hpp"
 
 namespace rmk {
@@ -21,9 +22,9 @@ struct Fence {
 };
 
 // Data Node membership, Chunk placement and the Controller lease (ADR 0005, 0009).
-class ClusterStore {
+class ClusterStore : public GarbageSink {
 public:
-    virtual ~ClusterStore() = default;
+    ~ClusterStore() override = default;
 
     // --- Data Nodes. heartbeat() upserts the record and stamps last_heartbeat = now.
     virtual Status heartbeat(const NodeInfo& node, Clock::time_point now) = 0;
@@ -52,7 +53,7 @@ public:
     virtual Result<ChunkInfo> claim_open_chunk(const StoragePolicy& policy, std::string_view writer,
                                                std::uint64_t min_free, Clock::time_point lease_until,
                                                Clock::time_point now) = 0;
-    virtual Status add_garbage(ChunkId id, std::uint64_t bytes) = 0;  // atomic add
+    Status add_garbage(ChunkId id, std::uint64_t bytes) override = 0;  // atomic add
 
     // --- Controller leadership. Acquires or renews; aborted while another holder's lease lives.
     // Returns the epoch, which grows every time leadership changes hands.

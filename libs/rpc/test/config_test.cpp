@@ -117,14 +117,14 @@ TEST(DataNodeOptions, ReadsTheEnvironment) {
                                                   {"RMK_ADVERTISE_ADDRESS", "dn-0.dn:7001"},
                                                   {"RMK_DATA_DIR", "/data"},
                                                   {"RMK_ZONE", "z1"},
-                                                  {"RMK_K8S_NODE", "worker-3"},
+                                                  {"RMK_HOST", "worker-3"},
                                                   {"RMK_CAPACITY_BYTES", "1000000"}}));
     ASSERT_TRUE(options) << options.error().message;
     EXPECT_EQ(options->identity.id, "dn-0");
     EXPECT_EQ(options->identity.address, "dn-0.dn:7001");
     EXPECT_EQ(options->data_dir, "/data");
     EXPECT_EQ(options->identity.zone, "z1");
-    EXPECT_EQ(options->identity.k8s_node, "worker-3");
+    EXPECT_EQ(options->identity.host, "worker-3");
     EXPECT_EQ(options->identity.capacity_bytes, 1000000u);
 }
 
@@ -141,9 +141,6 @@ TEST(DataNodeOptions, RejectsMissingOrInvalidValues) {
     auto bad_capacity = base;
     bad_capacity["RMK_CAPACITY_BYTES"] = "lots";
     EXPECT_EQ(datanode::load_options(env_of(bad_capacity)).error().code, Errc::invalid_argument);
-    auto lookup_without_node = base;
-    lookup_without_node["RMK_K8S_ZONE_LOOKUP"] = "true";
-    EXPECT_EQ(datanode::load_options(env_of(lookup_without_node)).error().code, Errc::invalid_argument);
 }
 
 }  // namespace

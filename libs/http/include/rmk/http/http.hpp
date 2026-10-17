@@ -47,16 +47,6 @@ private:
     std::thread thread_;
 };
 
-// ----- Client (libcurl). Used for the k8s API (node labels).
-struct GetOptions {
-    std::string bearer_token;  // empty: no Authorization header
-    std::string ca_file;       // empty: system trust store
-    std::chrono::milliseconds timeout{5000};
-};
-
-// Body of a 2xx response; unavailable on transport errors, the status code in the message otherwise.
-Result<std::string> get(std::string_view url, const GetOptions& options);
-
 }  // namespace rmk::http
 
 namespace rmk::metrics {

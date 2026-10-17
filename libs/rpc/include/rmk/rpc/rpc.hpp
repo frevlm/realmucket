@@ -14,6 +14,7 @@
 #include "rmk/core/cluster_store.hpp"
 #include "rmk/core/env.hpp"
 #include "rmk/core/error.hpp"
+#include "rmk/core/extent_io.hpp"
 #include "rmk/core/config_store.hpp"
 #include "rmk/core/meta_store.hpp"
 #include "rmk/core/types.hpp"
@@ -66,13 +67,13 @@ struct WriterOptions {
 
 // Places bytes durably on every replica of an open Chunk it holds the writer lease for.
 // Thread-safe: concurrent writes go to different Chunks of the pool or wait their turn.
-class ChunkWriter {
+class ChunkWriter final : public ExtentWriter {
 public:
     ChunkWriter(std::shared_ptr<ClusterStore> cluster, std::shared_ptr<Channels> channels,
                 WriterOptions options);
-    ~ChunkWriter();  // stops renewing and releases its leases (recording each Chunk's size)
+    ~ChunkWriter() override;  // stops renewing and releases its leases (recording each Chunk's size)
 
-    Result<Extent> write(const StoragePolicy& policy, std::span<const std::byte> bytes);
+    Result<Extent> write(const StoragePolicy& policy, std::span<const std::byte> bytes) override;
 
     ChunkWriter(const ChunkWriter&) = delete;
     ChunkWriter& operator=(const ChunkWriter&) = delete;
@@ -83,12 +84,12 @@ private:
 };
 
 // Reads Extents from replicas or erasure-coded shards, verifying Extent.crc32c.
-class ChunkReader {
+class ChunkReader final : public ExtentReader {
 public:
     ChunkReader(std::shared_ptr<ClusterStore> cluster, std::shared_ptr<Channels> channels);
-    ~ChunkReader();
+    ~ChunkReader() override;
 
-    Result<std::vector<std::byte>> read(const Extent& extent);
+    Result<std::vector<std::byte>> read(const Extent& extent) override;
 
 private:
     struct Impl;

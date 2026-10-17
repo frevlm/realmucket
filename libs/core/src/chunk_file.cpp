@@ -141,7 +141,7 @@ ChunkFile::ChunkFile(int fd, ChunkHeader header, std::uint64_t size)
     : fd_(fd), header_(header), size_(size) {}
 
 ChunkFile::ChunkFile(ChunkFile&& other) noexcept
-    : fd_(std::exchange(other.fd_, -1)), header_(other.header_), size_(other.size_) {}
+    : fd_(std::exchange(other.fd_, -1)), header_(other.header_), size_(other.size_.load()) {}
 
 ChunkFile& ChunkFile::operator=(ChunkFile&& other) noexcept {
     if (this != &other) {
@@ -149,7 +149,7 @@ ChunkFile& ChunkFile::operator=(ChunkFile&& other) noexcept {
             ::close(fd_);
         fd_ = std::exchange(other.fd_, -1);
         header_ = other.header_;
-        size_ = other.size_;
+        size_.store(other.size_.load());
     }
     return *this;
 }
@@ -199,25 +199,45 @@ Result<ChunkFile> ChunkFile::open(const std::filesystem::path& path) {
         return fail(Errc::corruption, "chunk file larger than its capacity");
 
     file.header_ = *header;
-    file.size_ = size;
+    file.size_.store(size);
     return file;
 }
 
 Result<Extent> ChunkFile::append(std::span<const std::byte> data) {
-    return write_at(size_, data);
+    return write_at(size(), data);
+}
+
+Result<std::uint64_t> ChunkFile::reserve(std::uint64_t length) {
+    std::uint64_t end = size_.load(std::memory_order_relaxed);
+    for (;;) {
+        if (end > header_.capacity || length > header_.capacity - end)
+            return fail(Errc::no_space, "chunk " + std::to_string(header_.chunk_id) + " is full");
+        if (size_.compare_exchange_weak(end, end + length, std::memory_order_acq_rel, std::memory_order_relaxed))
+            return end;
+    }
+}
+
+Result<Extent> ChunkFile::write_reserved(std::uint64_t offset, std::span<const std::byte> data) {
+    if (offset < kChunkHeaderSize || offset > size() || data.size() > size() - offset)
+        return fail(Errc::invalid_argument, "write outside the reserved range of chunk " + std::to_string(header_.chunk_id));
+    Extent extent{header_.chunk_id, offset, data.size(), crc32c(data)};
+    if (auto s = write_all(fd_, data.data(), data.size(), offset); !s)
+        return std::unexpected(s.error());
+    return extent;
 }
 
 Result<Extent> ChunkFile::write_at(std::uint64_t offset, std::span<const std::byte> data) {
-    if (offset < size_)
+    const std::uint64_t end = size();
+    if (offset < end)
         return fail(Errc::invalid_argument, "write at " + std::to_string(offset) + " would overwrite chunk " +
-                                                std::to_string(header_.chunk_id) + " (end " + std::to_string(size_) + ")");
+                                                std::to_string(header_.chunk_id) + " (end " + std::to_string(end) + ")");
     if (offset > header_.capacity || data.size() > header_.capacity - offset)
         return fail(Errc::no_space, "chunk " + std::to_string(header_.chunk_id) + " is full");
 
     Extent extent{header_.chunk_id, offset, data.size(), crc32c(data)};
     if (auto s = write_all(fd_, data.data(), data.size(), offset); !s)
         return std::unexpected(s.error());
-    size_ = offset + data.size();
+    size_.store(offset + data.size(), std::memory_order_release);
     return extent;
 }
 
@@ -233,7 +253,8 @@ Result<std::vector<std::byte>> ChunkFile::read(const Extent& extent) const {
 }
 
 Result<std::vector<std::byte>> ChunkFile::read_range(std::uint64_t offset, std::uint64_t length) const {
-    if (offset < kChunkHeaderSize || offset > size_ || length > size_ - offset)
+    const std::uint64_t end = size();
+    if (offset < kChunkHeaderSize || offset > end || length > end - offset)
         return fail(Errc::invalid_argument, "range outside chunk " + std::to_string(header_.chunk_id));
     std::vector<std::byte> data(length);
     if (auto s = read_all(fd_, data.data(), data.size(), offset); !s)

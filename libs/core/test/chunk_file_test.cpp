@@ -4,7 +4,10 @@
 #include <unistd.h>
 
 #include <filesystem>
+#include <algorithm>
 #include <fstream>
+#include <thread>
+#include <vector>
 #include <string>
 #include <string_view>
 
@@ -139,6 +142,69 @@ TEST_F(ChunkFileTest, RejectsFileWithoutChunkHeader) {
     auto chunk = rmk::ChunkFile::open(path());
     ASSERT_FALSE(chunk);
     EXPECT_EQ(chunk.error().code, rmk::Errc::corruption);
+}
+
+
+TEST_F(ChunkFileTest, ReservedRangesAreContiguousAndStopAtTheCapacity) {
+    auto file = rmk::ChunkFile::create(path(), header(rmk::kChunkHeaderSize + 100));
+    ASSERT_TRUE(file.has_value());
+    auto a = file->reserve(30);
+    auto b = file->reserve(70);
+    ASSERT_TRUE(a.has_value() && b.has_value());
+    EXPECT_EQ(*a, rmk::kChunkHeaderSize);
+    EXPECT_EQ(*b, rmk::kChunkHeaderSize + 30);
+    EXPECT_EQ(file->size(), rmk::kChunkHeaderSize + 100);
+    auto c = file->reserve(1);
+    ASSERT_FALSE(c.has_value());
+    EXPECT_EQ(c.error().code, rmk::Errc::no_space);
+    EXPECT_EQ(file->reserve(0).value_or(0), rmk::kChunkHeaderSize + 100);  // an empty claim is harmless
+}
+
+TEST_F(ChunkFileTest, ReservedRangeIsWrittenAndReadBack) {
+    auto file = rmk::ChunkFile::create(path(), header());
+    ASSERT_TRUE(file.has_value());
+    auto at = file->reserve(5);
+    ASSERT_TRUE(at.has_value());
+    auto extent = file->write_reserved(*at, bytes("hello"));
+    ASSERT_TRUE(extent.has_value()) << extent.error().message;
+    auto back = file->read(*extent);
+    ASSERT_TRUE(back.has_value());
+    EXPECT_EQ(text(*back), "hello");
+    // Outside what was reserved is refused.
+    EXPECT_FALSE(file->write_reserved(*at + 3, bytes("hello")).has_value());
+    EXPECT_FALSE(file->write_reserved(0, bytes("x")).has_value());
+}
+
+TEST_F(ChunkFileTest, ConcurrentWritersGetDisjointRanges) {
+    auto file = rmk::ChunkFile::create(path(), header(rmk::kChunkHeaderSize + 8 * 200 * 8));
+    ASSERT_TRUE(file.has_value());
+    constexpr int kThreads = 8, kPerThread = 200;
+    std::vector<std::vector<rmk::Extent>> got(kThreads);
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t)
+        threads.emplace_back([&, t] {
+            const std::string payload(8, static_cast<char>('a' + t));
+            for (int i = 0; i < kPerThread; ++i) {
+                auto at = file->reserve(payload.size());
+                ASSERT_TRUE(at.has_value());
+                auto e = file->write_reserved(*at, bytes(payload));
+                ASSERT_TRUE(e.has_value());
+                got[t].push_back(*e);
+            }
+        });
+    for (auto& th : threads)
+        th.join();
+    std::vector<rmk::Extent> all;
+    for (auto& per : got)
+        all.insert(all.end(), per.begin(), per.end());
+    std::sort(all.begin(), all.end(), [](const auto& x, const auto& y) { return x.offset < y.offset; });
+    ASSERT_EQ(all.size(), static_cast<std::size_t>(kThreads * kPerThread));
+    for (std::size_t i = 0; i < all.size(); ++i)
+        EXPECT_EQ(all[i].offset, rmk::kChunkHeaderSize + 8 * i);  // no gaps, no overlaps
+    for (int t = 0; t < kThreads; ++t)
+        for (const auto& e : got[t])
+            EXPECT_EQ(text(*file->read(e)), std::string(8, static_cast<char>('a' + t)));
+    EXPECT_EQ(file->reserve(1).error().code, rmk::Errc::no_space);
 }
 
 }  // namespace
