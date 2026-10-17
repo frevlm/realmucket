@@ -11,7 +11,7 @@ RUN cmake -S . -B /tmp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRMK_BUILD_TES
 
 FROM ubuntu:24.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ca-certificates libgrpc++1.51t64 libprotobuf32t64 libssl3t64 libcurl4t64 \
+        ca-certificates libgrpc++1.51t64 libprotobuf32t64 libssl3t64 librocksdb8.9 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 10001 --user-group --no-create-home --shell /usr/sbin/nologin rmk \
     && mkdir -p /var/lib/rmk/data && chown -R rmk:rmk /var/lib/rmk

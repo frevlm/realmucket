@@ -1,7 +1,0 @@
-# Optional: kubectl apply -k deploy/k8s/cert-manager   (cert-manager must be installed)
-# Issues Secret "realmucket-tls" (tls.crt, tls.key, ca.crt) from a namespaced self-signed CA.
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-namespace: realmucket
-resources:
-  - certificates.yaml
