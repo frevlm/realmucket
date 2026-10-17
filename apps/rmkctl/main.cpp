@@ -151,7 +151,6 @@ void print(const c::TenantInfo& t) {
 
 void print(const c::BucketInfo& b) {
     std::cout << b.tenant << '\t' << b.bucket << '\t' << (b.config.versioning ? "versioned" : "unversioned")
-              << '\t' << b.config.storage_policy.data_units << '+' << b.config.storage_policy.parity_units
               << '\n';
 }
 
@@ -159,9 +158,6 @@ c::BucketConfig config_from(const Args& a, c::BucketConfig base) {
     if (a.has("versioning")) {
         base.versioning = a.get("versioning") != "false";
     }
-    base.storage_policy.data_units = static_cast<std::uint32_t>(a.number("data-units", base.storage_policy.data_units));
-    base.storage_policy.parity_units =
-        static_cast<std::uint32_t>(a.number("parity-units", base.storage_policy.parity_units));
     return base;
 }
 
@@ -280,7 +276,6 @@ const char* kUsage =
     "  (endpoint defaults to $RMK_ENDPOINT, tenant to $RMK_TENANT; bucket and object commands need a tenant)\n"
     "  tenant    create NAME | get NAME | quota NAME      [--max-bytes N] [--max-objects N]\n"
     "  bucket    create|delete|get|config BUCKET | list   [--versioning[=false]]\n"
-    "            [--data-units N] [--parity-units N]\n"
     "  object    put BUCKET KEY FILE|- | get BUCKET KEY FILE|- | head|rm|versions BUCKET KEY |\n"
     "            rm-version BUCKET KEY GENERATION | ls BUCKET\n"
     "            [--if-not-exists] [--if-generation-match N] [--resume UPLOAD_ID]\n"

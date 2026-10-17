@@ -144,8 +144,6 @@ Status ChunkStore::start_chunk() {
     ChunkHeader header;
     header.chunk_id = id;
     header.capacity = options_.chunk_capacity;
-    header.data_units = 1;
-    header.parity_units = 0;
     const fs::path path = chunk_path(options_.dir, id);
     auto file = ChunkFile::create(path, header);
     if (!file)
@@ -156,7 +154,7 @@ Status ChunkStore::start_chunk() {
     return {};
 }
 
-Result<Extent> ChunkStore::write(const StoragePolicy&, std::span<const std::byte> bytes) {
+Result<Extent> ChunkStore::write(std::span<const std::byte> bytes) {
     if (bytes.size() > options_.chunk_capacity - kChunkHeaderSize)
         return fail(Errc::invalid_argument, std::format("{} bytes do not fit in a chunk of {} bytes", bytes.size(),
                                                         options_.chunk_capacity));

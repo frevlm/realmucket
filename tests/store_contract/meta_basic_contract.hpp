@@ -86,7 +86,6 @@ TEST_P(MetaStoreContract, CreateBucketStoresConfig) {
     RMK_ASSERT_OK(store->create_tenant("acme", {}));
     BucketConfig config;
     config.versioning = true;
-    config.storage_policy = StoragePolicy{4, 2};
     RMK_ASSERT_OK(store->create_bucket(bucket_ref(), config));
     auto info = store->get_bucket(bucket_ref());
     RMK_ASSERT_OK(info);
@@ -122,28 +121,10 @@ TEST_P(MetaStoreContract, InvalidBucketNamesAreRejected) {
     RMK_EXPECT_OK(store->create_bucket(bucket_ref("acme", std::string(63, 'b')), {}));
 }
 
-TEST_P(MetaStoreContract, BucketConfigValidation) {
-    RMK_ASSERT_OK(store->create_tenant("acme", {}));
-    auto config = [](int data, int parity) {
-        BucketConfig c;
-        c.storage_policy = StoragePolicy{static_cast<std::uint8_t>(data), static_cast<std::uint8_t>(parity)};
-        return c;
-    };
-    RMK_EXPECT_ERR(store->create_bucket(bucket_ref("acme", "zero"), config(0, 2)), invalid_argument);
-    RMK_EXPECT_ERR(store->create_bucket(bucket_ref("acme", "big"), config(10, 11)), invalid_argument);
-    RMK_EXPECT_ERR(store->create_bucket(bucket_ref("acme", "huge"), config(255, 255)), invalid_argument);
-    RMK_EXPECT_OK(store->create_bucket(bucket_ref("acme", "max"), config(10, 10)));
-    RMK_EXPECT_OK(store->create_bucket(bucket_ref("acme", "wide"), config(20, 0)));
-    RMK_EXPECT_OK(store->create_bucket(bucket_ref("acme", "mirror"), config(1, 0)));
-    RMK_EXPECT_ERR(store->set_bucket_config(bucket_ref("acme", "max"), config(0, 1)), invalid_argument);
-    RMK_EXPECT_ERR(store->set_bucket_config(bucket_ref("acme", "max"), config(15, 6)), invalid_argument);
-}
-
 TEST_P(MetaStoreContract, SetBucketConfigReplacesConfig) {
     init();
     BucketConfig config;
     config.versioning = true;
-    config.storage_policy = StoragePolicy{6, 3};
     RMK_ASSERT_OK(store->set_bucket_config(bucket_ref(), config));
     auto info = store->get_bucket(bucket_ref());
     RMK_ASSERT_OK(info);

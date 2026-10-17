@@ -7,7 +7,6 @@ namespace rmk {
 namespace {
 
 constexpr std::size_t kMaxNameLength = 63;
-constexpr int kMaxUnits = 20;
 
 bool is_alnum(char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9'); }
 
@@ -73,15 +72,6 @@ Status validate_object_key(std::string_view key) {
 Status validate_list_limit(std::size_t limit) {
     if (limit < 1 || limit > kMaxListLimit)
         return fail(Errc::invalid_argument, "list limit must be 1-1000");
-    return {};
-}
-
-Status validate_bucket_config(const BucketConfig& config) {
-    const auto& p = config.storage_policy;
-    if (p.data_units < 1)
-        return fail(Errc::invalid_argument, "storage policy needs at least one data unit");
-    if (p.data_units + p.parity_units > kMaxUnits)
-        return fail(Errc::invalid_argument, "storage policy data + parity units must be <= 20");
     return {};
 }
 

@@ -22,14 +22,9 @@ message Quota {
   uint64 max_objects = 2;  // 0 = unlimited
 }
 
-message StoragePolicy {
-  uint32 data_units = 1;
-  uint32 parity_units = 2;
-}
-
 message BucketConfig {
+  reserved 2;  // was storage_policy; old clients may still send it and it is ignored
   bool versioning = 1;
-  StoragePolicy storage_policy = 2;  // unset = 1 + 2 replicas
 }
 
 message BucketInfo {

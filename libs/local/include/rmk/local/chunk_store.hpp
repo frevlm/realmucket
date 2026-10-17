@@ -47,8 +47,7 @@ public:
     static Result<std::unique_ptr<ChunkStore>> open(Options options);
     ~ChunkStore() override;
 
-    // `policy` is ignored: there is one copy of everything.
-    Result<Extent> write(const StoragePolicy& policy, std::span<const std::byte> bytes) override;
+    Result<Extent> write(std::span<const std::byte> bytes) override;
     Result<std::vector<std::byte>> read(const Extent& extent) override;
     Status add_garbage(ChunkId id, std::uint64_t bytes) override;
     Status set_garbage(ChunkId id, std::uint64_t bytes);

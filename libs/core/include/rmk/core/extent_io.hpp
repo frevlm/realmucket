@@ -16,9 +16,8 @@ namespace rmk {
 class ExtentWriter {
 public:
     virtual ~ExtentWriter() = default;
-    // Durable (fsynced) when it returns. `policy` is how much redundancy the bucket asked for;
-    // a store with no redundancy to offer ignores it.
-    virtual Result<Extent> write(const StoragePolicy& policy, std::span<const std::byte> bytes) = 0;
+    // Durable (fsynced) when it returns.
+    virtual Result<Extent> write(std::span<const std::byte> bytes) = 0;
 };
 
 class ExtentReader {

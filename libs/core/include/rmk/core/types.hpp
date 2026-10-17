@@ -59,18 +59,8 @@ struct TenantInfo {
     Usage usage;
 };
 
-// Redundancy as data_units + parity_units (ADR 0005). 1 + 2 is three full replicas.
-struct StoragePolicy {
-    std::uint8_t data_units = 1;
-    std::uint8_t parity_units = 2;
-    auto operator<=>(const StoragePolicy&) const = default;
-};
-
-inline constexpr StoragePolicy kReplicated3{1, 2};
-
 struct BucketConfig {
     bool versioning = false;
-    StoragePolicy storage_policy = kReplicated3;  // applied to Sealed Chunks
     bool operator==(const BucketConfig&) const = default;
 };
 

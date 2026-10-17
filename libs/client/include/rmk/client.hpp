@@ -94,14 +94,8 @@ struct ListResult {
     std::string next_start_after;  // empty at the end
 };
 
-struct StoragePolicy {
-    std::uint32_t data_units = 1;
-    std::uint32_t parity_units = 2;
-};
-
 struct BucketConfig {
     bool versioning = false;
-    StoragePolicy storage_policy;
 };
 
 struct BucketInfo {

@@ -15,16 +15,12 @@ namespace rmk {
 inline constexpr std::size_t kChunkHeaderSize = 64;
 inline constexpr std::uint32_t kChunkFormatVersion = 1;
 
-// Self-describing header (ADR 0006). Redundancy is always data_units + parity_units:
-// three replicas are simply 1 + 2, so replication and erasure coding share one description.
-// A replica file holds the whole Chunk; an erasure-coded shard file holds shard `shard_index`.
+// Self-describing header (ADR 0006). Bytes 12 to 15 of the file are reserved (older files keep
+// redundancy parameters there; they are ignored and written as zero).
 struct ChunkHeader {
     std::uint32_t format_version = kChunkFormatVersion;
     ChunkId chunk_id = 0;
     std::uint64_t capacity = 0;  // total file size limit, header included
-    std::uint8_t data_units = 1;
-    std::uint8_t parity_units = 2;
-    std::uint8_t shard_index = 0;
     bool operator==(const ChunkHeader&) const = default;
 };
 

@@ -76,7 +76,7 @@ protected:
         EXPECT_TRUE(upload.has_value());
         const std::string plain(size, fill);
         auto sealed = crypto::seal_part(data_key->key, 1, bytes_of(plain));
-        auto extent = store->write(kReplicated3, sealed);
+        auto extent = store->write(sealed);
         EXPECT_TRUE(extent.has_value()) << (extent ? "" : extent.error().message);
         Part part{1, size, crc32c(bytes_of(plain)), *extent};
         EXPECT_TRUE(meta->put_part(*upload, part, Clock::now()));

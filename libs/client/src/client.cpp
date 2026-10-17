@@ -87,8 +87,6 @@ void fill(pb::Precondition* out, const Precondition& in) {
 
 void fill(pb::BucketConfig* out, const BucketConfig& in) {
     out->set_versioning(in.versioning);
-    out->mutable_storage_policy()->set_data_units(in.storage_policy.data_units);
-    out->mutable_storage_policy()->set_parity_units(in.storage_policy.parity_units);
 }
 
 void fill(pb::Quota* out, const Quota& in) {
@@ -112,8 +110,6 @@ BucketInfo convert(const pb::BucketInfo& in) {
     out.tenant = in.tenant();
     out.bucket = in.bucket();
     out.config.versioning = in.config().versioning();
-    out.config.storage_policy = {in.config().storage_policy().data_units(),
-                                 in.config().storage_policy().parity_units()};
     return out;
 }
 

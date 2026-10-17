@@ -122,18 +122,6 @@ TEST_F(ChunkFileTest, WriteAtLeavesHoleAndRefusesToOverwrite) {
     EXPECT_EQ(back.error().code, rmk::Errc::invalid_argument);
 }
 
-TEST_F(ChunkFileTest, ShardIndexSurvivesReopen) {
-    auto shard = header();
-    shard.data_units = 4;
-    shard.parity_units = 2;
-    shard.shard_index = 5;
-    ASSERT_TRUE(rmk::ChunkFile::create(path(), shard));
-
-    auto chunk = rmk::ChunkFile::open(path());
-    ASSERT_TRUE(chunk);
-    EXPECT_EQ(chunk->header(), shard);
-}
-
 TEST_F(ChunkFileTest, RejectsFileWithoutChunkHeader) {
     {
         std::ofstream f(path(), std::ios::binary);

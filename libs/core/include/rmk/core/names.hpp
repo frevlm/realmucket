@@ -18,7 +18,5 @@ Status validate_bucket_name(std::string_view name);
 Status validate_object_key(std::string_view key);
 // 1-1000.
 Status validate_list_limit(std::size_t limit);
-// 1 <= data_units, data_units + parity_units <= 20.
-Status validate_bucket_config(const BucketConfig& config);
 
 }  // namespace rmk

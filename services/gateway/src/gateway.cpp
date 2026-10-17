@@ -99,14 +99,6 @@ void fill(pb::TenantInfo* out, const TenantInfo& t) {
 Result<BucketConfig> to_config(const pb::BucketConfig& c) {
     BucketConfig config;
     config.versioning = c.versioning();
-    if (c.has_storage_policy()) {
-        const auto& sp = c.storage_policy();
-        if (sp.data_units() > 255 || sp.parity_units() > 255)
-            return fail(Errc::invalid_argument, "data_units + parity_units must be at most 20");
-        config.storage_policy = {static_cast<std::uint8_t>(sp.data_units()),
-                                 static_cast<std::uint8_t>(sp.parity_units())};
-    }
-    if (auto valid = validate_bucket_config(config); !valid) return std::unexpected(valid.error());
     return config;
 }
 
@@ -114,8 +106,6 @@ void fill(pb::BucketInfo* out, const BucketInfo& b) {
     out->set_tenant(b.ref.tenant);
     out->set_bucket(b.ref.bucket);
     out->mutable_config()->set_versioning(b.config.versioning);
-    out->mutable_config()->mutable_storage_policy()->set_data_units(b.config.storage_policy.data_units);
-    out->mutable_config()->mutable_storage_policy()->set_parity_units(b.config.storage_policy.parity_units);
 }
 
 void fill(pb::ObjectInfo* out, const ObjectMeta& m) {
@@ -303,13 +293,13 @@ struct Gateway::Impl final : pb::Storage::Service {
     // Encrypts one Part, places it on a Chunk and registers it with the Pending Upload. An Extent
     // is registered only within half the compaction grace of its acknowledgement, so its Chunk
     // cannot have been compacted in between (§6 safety rule 2); a late one is written again.
-    Result<Part> store_part(UploadId upload, const StoragePolicy& storage, const crypto::Key& key,
+    Result<Part> store_part(UploadId upload, const crypto::Key& key,
                             std::uint32_t number, std::span<const std::byte> plaintext) {
         const auto sealed = crypto::seal_part(key, number, plaintext);
         const auto deadline = std::chrono::duration_cast<std::chrono::milliseconds>(options.compaction_grace) / 2;
         Part part{number, plaintext.size(), crc32c(plaintext), {}};
         for (int attempt = 0; attempt < kWriteAttempts; ++attempt) {
-            auto extent = deps.writer->write(storage, sealed);
+            auto extent = deps.writer->write(sealed);
             if (!extent) return std::unexpected(extent.error());
             const auto acknowledged = std::chrono::steady_clock::now();
             part.extent = *extent;
@@ -331,7 +321,7 @@ struct Gateway::Impl final : pb::Storage::Service {
 
     // Reads a client stream of content into Parts of put_part_size().
     Status store_stream(grpc::ServerContext* ctx, grpc::ServerReader<pb::PutObjectRequest>* reader,
-                        UploadId upload, const StoragePolicy& storage, const crypto::Key& key) {
+                        UploadId upload, const crypto::Key& key) {
         const std::uint64_t part_size = put_part_size();
         ByteBudget::Reservation held(budget);
         std::vector<std::byte> buffer;
@@ -340,7 +330,7 @@ struct Gateway::Impl final : pb::Storage::Service {
             if (number == kMaxParts)
                 return fail(Errc::invalid_argument, "an object holds at most " + std::to_string(kMaxParts) +
                                                         " parts of " + std::to_string(part_size) + " bytes");
-            auto part = store_part(upload, storage, key, ++number, buffer);
+            auto part = store_part(upload, key, ++number, buffer);
             if (!part) return std::unexpected(part.error());
             buffer.clear();
             held.reset();
@@ -539,7 +529,7 @@ struct Gateway::Impl final : pb::Storage::Service {
             if (!upload) return std::unexpected(upload.error());
 
             Result<Generation> generation = [&]() -> Result<Generation> {
-                if (auto ok = store_stream(ctx, reader, *upload, bucket->config.storage_policy, data_key->key); !ok)
+                if (auto ok = store_stream(ctx, reader, *upload, data_key->key); !ok)
                     return std::unexpected(ok.error());
                 return meta().commit_upload(*upload, to_precondition(first.header().precondition()), Clock::now());
             }();
@@ -594,7 +584,7 @@ struct Gateway::Impl final : pb::Storage::Service {
                 buffer.insert(buffer.end(), data.begin(), data.end());
             }
             if (ctx->IsCancelled()) return fail(Errc::aborted, "the client cancelled the upload");
-            auto part = store_part(header.upload_id(), access->bucket.config.storage_policy, *key,
+            auto part = store_part(header.upload_id(), *key,
                                    header.part_number(), buffer);
             if (!part) return std::unexpected(part.error());
             fill(resp->mutable_part(), *part);

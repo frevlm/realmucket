@@ -277,7 +277,7 @@ struct Maintenance::Impl {
             log("error", std::format("compaction read from chunk {}: {}", ref.extent.chunk_id, describe(bytes.error())));
             return Relocation::failed;
         }
-        auto copy = store->write(kReplicated3, *bytes);
+        auto copy = store->write(*bytes);
         if (!copy) {
             log("error", "compaction write: " + describe(copy.error()));
             return Relocation::failed;

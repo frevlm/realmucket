@@ -4,6 +4,8 @@ status: accepted
 
 # 写入协议：意图记录 + 提交，支持条件写
 
+状态：部分作废（2026-10-17）：意图记录 + 提交的三步协议和条件写仍然有效；其中“Data Node 上的 Chunk”现在是本机 ChunkStore，“由 Data Node 发起提交”这一备选项和“一个 FDB 提交的时间”这两处措辞作废（元数据为本机 RocksDB）。
+
 一次写入分三步：① Gateway 在 Metadata Store 写入 Pending Upload（包含 upload id、预分配的 Extent、deadline）；② 把字节写入 Data Node 上的 Chunk；③ 用一个 Metadata Store 事务删除 Pending Upload 并写入正式的 Object 索引。Object 只有在第 ③ 步提交后才可见，提交后立即全局可读。崩溃留下的孤儿数据，靠扫描已经超过 deadline 的 Pending Upload 来精确回收，回收代价只和崩溃次数成正比，不和数据总量成正比。
 
 条件写（`if-generation-match`、`if-not-exists`）的判断放在第 ③ 步的提交事务里，不在第 ① 步做，否则两个并发写入都可能通过检查。没有附加条件的并发覆盖，按提交顺序由最后提交者生效；被覆盖的旧 Extent 在同一个事务里登记为待回收。

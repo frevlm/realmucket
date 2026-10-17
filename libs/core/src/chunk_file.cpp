@@ -49,9 +49,6 @@ HeaderBytes encode(const ChunkHeader& h) {
     HeaderBytes out{};
     std::memcpy(out.data(), kMagic.data(), kMagic.size());
     put_le<std::uint32_t>(out, 8, h.format_version);
-    put_le<std::uint8_t>(out, 12, h.data_units);
-    put_le<std::uint8_t>(out, 13, h.parity_units);
-    put_le<std::uint8_t>(out, 14, h.shard_index);
     put_le<std::uint64_t>(out, 16, h.chunk_id);
     put_le<std::uint64_t>(out, 24, h.capacity);
     put_le<std::uint32_t>(out, kCrcOffset, crc32c(std::span(out).first(kCrcOffset)));
@@ -66,9 +63,6 @@ Result<ChunkHeader> decode(const HeaderBytes& in) {
 
     ChunkHeader h;
     h.format_version = get_le<std::uint32_t>(in, 8);
-    h.data_units = get_le<std::uint8_t>(in, 12);
-    h.parity_units = get_le<std::uint8_t>(in, 13);
-    h.shard_index = get_le<std::uint8_t>(in, 14);
     h.chunk_id = get_le<std::uint64_t>(in, 16);
     h.capacity = get_le<std::uint64_t>(in, 24);
     // Every format up to the current one stays readable forever (ADR 0015).
@@ -160,7 +154,7 @@ ChunkFile::~ChunkFile() {
 }
 
 Result<ChunkFile> ChunkFile::create(const std::filesystem::path& path, const ChunkHeader& header) {
-    if (header.capacity <= kChunkHeaderSize || header.data_units == 0)
+    if (header.capacity <= kChunkHeaderSize)
         return fail(Errc::invalid_argument, "invalid chunk header");
 
     int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0644);

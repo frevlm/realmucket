@@ -113,7 +113,6 @@ Status MemoryMetaStore::set_quota(std::string_view name, const Quota& quota) {
 Status MemoryMetaStore::create_bucket(const BucketRef& bucket, const BucketConfig& config) {
     if (auto valid = validate_tenant_name(bucket.tenant); !valid) return valid;
     if (auto valid = validate_bucket_name(bucket.bucket); !valid) return valid;
-    if (auto valid = validate_bucket_config(config); !valid) return valid;
     std::lock_guard lock(mutex_);
     if (!tenants_.contains(bucket.tenant))
         return fail(Errc::not_found, "no such tenant: " + bucket.tenant);
@@ -153,7 +152,6 @@ Result<std::vector<BucketInfo>> MemoryMetaStore::list_buckets(std::string_view t
 }
 
 Status MemoryMetaStore::set_bucket_config(const BucketRef& bucket, const BucketConfig& config) {
-    if (auto valid = validate_bucket_config(config); !valid) return valid;
     std::lock_guard lock(mutex_);
     auto it = buckets_.find(bucket);
     if (it == buckets_.end()) return fail(Errc::not_found, "no such bucket: " + describe(bucket));

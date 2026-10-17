@@ -4,6 +4,8 @@ status: accepted
 
 # 条件写比较 Generation，完整性靠 Checksum；Versioning 按 Bucket 开关，默认关闭
 
+状态：部分作废（2026-10-17）：Generation、Checksum、Versioning 的语义不变；“直接使用 FoundationDB 事务的提交版本号（versionstamp 前 8 字节）”和“由 FDB 分配”这两处作废，现在 Generation 来自 RocksDB MetaStore 中持久化的计数器，同一 Object 内唯一，只增不减。见 docs/metadata-store.md。
+
 每次 Object 提交时，系统分配一个 Generation：直接使用 FoundationDB 事务的提交版本号（versionstamp 前 8 字节）：同一 Object 内唯一且严格递增，全集群按提交顺序不减。条件写只比较 Generation：`if-generation-match` 要求当前 Generation 等于给定值，`if-not-exists` 等价于要求当前 Generation 为 0。内容完整性由单独的 Checksum（crc32c）负责，它不参与条件判断。这样就避免了用内容哈希做条件写时的 ABA 问题：内容被改走又改回，Generation 也一定不同。
 
 Versioning 按 Bucket 单独开关，默认关闭。开启后，每个历史版本由它的 Generation 唯一标识，删除标记也有自己的 Generation。关闭时，覆盖和删除都会回收旧数据。

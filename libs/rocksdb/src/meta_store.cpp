@@ -139,8 +139,8 @@ bool decode_header(std::string_view v, ObjectMeta& m) {
 std::string encode_bucket(const BucketInfo& b) {
     return Writer()
         .u8(b.config.versioning)
-        .u8(b.config.storage_policy.data_units)
-        .u8(b.config.storage_policy.parity_units)
+        .u8(0)  // reserved: the two bytes of the old storage policy
+        .u8(0)
         .take();
 }
 
@@ -149,8 +149,8 @@ std::optional<BucketInfo> decode_bucket(const BucketRef& ref, std::string_view v
     BucketInfo b;
     b.ref = ref;
     b.config.versioning = r.u8() != 0;
-    b.config.storage_policy.data_units = r.u8();
-    b.config.storage_policy.parity_units = r.u8();
+    r.u8();  // reserved
+    r.u8();
     return r.ok() ? std::optional(b) : std::nullopt;
 }
 
@@ -560,7 +560,6 @@ Status RocksMetaStore::set_quota(std::string_view name, const Quota& quota) {
 Status RocksMetaStore::create_bucket(const BucketRef& bucket, const BucketConfig& config) {
     if (auto valid = validate_tenant_name(bucket.tenant); !valid) return valid;
     if (auto valid = validate_bucket_name(bucket.bucket); !valid) return valid;
-    if (auto valid = validate_bucket_config(config); !valid) return valid;
     Keys k{prefix_};
     return write(*db_, Database::Durability::durable, [&](Txn& tx) -> Status {
         auto tenant = load_quota(tx, k, bucket.tenant);
@@ -632,7 +631,6 @@ Result<std::vector<BucketInfo>> RocksMetaStore::list_buckets(std::string_view te
 }
 
 Status RocksMetaStore::set_bucket_config(const BucketRef& bucket, const BucketConfig& config) {
-    if (auto valid = validate_bucket_config(config); !valid) return valid;
     Keys k{prefix_};
     return write(*db_, Database::Durability::durable, [&](Txn& tx) -> Status {
         auto existing = load_bucket(tx, k, bucket);

@@ -742,7 +742,7 @@ TEST_F(GatewayTest, ReadsFollowRelocatedParts) {
         for (const auto& part : version.parts) {
             auto stored = chunks->read(part.extent);
             ASSERT_TRUE(stored.has_value());
-            auto moved = chunks->write(rmk::kReplicated3, *stored);
+            auto moved = chunks->write(*stored);
             ASSERT_TRUE(moved.has_value()) << moved.error().message;
             ASSERT_NE(moved->chunk_id, part.extent.chunk_id);
             ASSERT_TRUE(meta->relocate_part(version.ref, version.generation, part.number, part.extent, *moved));

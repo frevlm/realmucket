@@ -4,6 +4,8 @@ status: accepted
 
 # Tenant → Bucket 两级命名空间，配额挂在 Tenant 上
 
+状态：部分作废（2026-10-17）：Tenant → Bucket 模型、key 前缀布局和软配额仍然有效；“用量计数用 FDB 原子加法维护”作废，现在由 MetaStore 的单写线程读改写计数器。见 docs/metadata-store.md。
+
 Bucket 名字只在所属 Tenant 内唯一，不是全局唯一。Tenant 是独立存储在 Metadata Store 中的概念，和 k8s Namespace 没有绑定关系。第一期就提供 Tenant 级配额。Metadata Store 中所有 Object 索引的 key 以 `tenant/bucket/object_key` 为前缀，所以统计、迁移、删除一个 Tenant，都是对一段连续 key 区间的操作。
 
 ## Considered Options

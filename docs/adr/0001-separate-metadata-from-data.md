@@ -4,6 +4,8 @@ status: accepted
 
 # 元数据与数据分离：无状态 Gateway + Metadata Store + Data Node
 
+状态：部分作废（2026-10-17）：单机化后已删除 Data Node、独立的无状态 Gateway 进程及其 Deployment/HPA/StatefulSet 部署；仍然有效的是“Object 索引全部放在 Metadata Store，列举和生命周期匹配只做有序范围扫描”。三层分离已变为 realmucketd 内的 Gateway（Storage gRPC 服务）+ MetaStore（RocksDB）+ 本地 ChunkStore。见 docs/IMPLEMENTATION.md。
+
 系统要在 k8s 上支持高并发、按节点弹性扩容，并且要高效执行 Lifecycle Rule 和 Bucket 级操作（统计、清空、删除），所以选择三层分离：无状态 Gateway（Deployment + HPA）、强一致事务的 Metadata Store、每个节点独占 RWO 卷的 Data Node（StatefulSet）。Object 索引全部放在 Metadata Store，列举和生命周期匹配只做有序范围扫描，不需要扇出到 Data Node。
 
 ## Considered Options

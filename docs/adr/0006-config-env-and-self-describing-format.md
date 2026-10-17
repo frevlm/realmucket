@@ -4,6 +4,8 @@ status: accepted
 
 # 负载相关参数不写死：进程参数走环境变量，集群策略走 Metadata Store，盘上格式自描述
 
+状态：部分作废（2026-10-17）：“进程参数走环境变量、非法值拒绝启动、盘上格式自描述”仍然有效；“Storage Policy 及其 EC 参数存放在 Metadata Store”和 Chunk 头部记录“冗余方式、EC 的 k 与 m”这两处作废，已无冗余方式可选。
+
 对象大小分布、总量和删除频率因部署而异，所以 Chunk 大小、封存阈值、压缩触发水位这类参数一律不写死，而是由环境变量注入（k8s 中经 ConfigMap 提供），未设置时使用默认值。但环境变量只适用于“单个进程自己的行为”：同一个 Deployment 或 StatefulSet 在滚动更新时，不同 Pod 的环境变量会短暂不一致。所以凡是必须全集群一致的配置（Storage Policy 及其 EC 参数），都存放在 Metadata Store，通过 API 修改。
 
 ## Consequences
