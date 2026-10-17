@@ -1,0 +1,218 @@
+// Public API served by the Gateway (ADR 0004). Additive changes only within v1:
+// never remove or renumber a field, never change the meaning of an existing one.
+//
+// Access control is the cluster's job (k8s NetworkPolicy / mTLS); the Gateway does not identify
+// callers, so every request names its tenant.
+// Every call carries metadata:
+//   x-rmk-sdk-version: <semver of the Client SDK>
+// Errors use gRPC status codes; the message starts with "<errc>: " (see rmk/error.hpp).
+syntax = "proto3";
+
+package rmk.v1;
+
+message Empty {}
+
+message Precondition {
+  // 0 means "only if it does not exist".
+  optional uint64 if_generation_match = 1;
+}
+
+message Quota {
+  uint64 max_bytes = 1;    // 0 = unlimited
+  uint64 max_objects = 2;  // 0 = unlimited
+}
+
+message StoragePolicy {
+  uint32 data_units = 1;
+  uint32 parity_units = 2;
+}
+
+message BucketConfig {
+  bool versioning = 1;
+  StoragePolicy storage_policy = 2;  // unset = 1 + 2 replicas
+}
+
+message BucketInfo {
+  reserved 4;
+  string tenant = 1;
+  string bucket = 2;
+  BucketConfig config = 3;
+}
+
+message TenantInfo {
+  string name = 1;
+  Quota quota = 2;
+  uint64 used_bytes = 3;
+  uint64 used_objects = 4;
+}
+
+message ObjectInfo {
+  string tenant = 1;
+  string bucket = 2;
+  string key = 3;
+  uint64 generation = 4;
+  uint64 size = 5;
+  uint32 checksum = 6;  // crc32c of the content
+  bool delete_marker = 7;
+  int64 created_unix_ms = 8;
+}
+
+// ----- Cluster and tenant administration
+
+message CreateTenantRequest {
+  string name = 1;
+  Quota quota = 2;
+}
+
+message GetTenantRequest { string name = 1; }
+
+message SetQuotaRequest {
+  string name = 1;
+  Quota quota = 2;
+}
+
+message ClusterConfig { string min_sdk_version = 1; }
+
+// ----- Buckets
+
+message BucketRequest {
+  string tenant = 1;
+  string bucket = 2;
+}
+
+message CreateBucketRequest {
+  string tenant = 1;
+  string bucket = 2;
+  BucketConfig config = 3;
+}
+
+message ListBucketsRequest { string tenant = 1; }
+message ListBucketsResponse { repeated BucketInfo buckets = 1; }
+
+message SetBucketConfigRequest {
+  string tenant = 1;
+  string bucket = 2;
+  BucketConfig config = 3;
+}
+
+// ----- Objects
+
+message ObjectLocation {
+  string tenant = 1;
+  string bucket = 2;
+  string key = 3;
+}
+
+message PutObjectRequest {
+  message Header {
+    ObjectLocation location = 1;
+    Precondition precondition = 2;
+  }
+  oneof item {
+    Header header = 1;  // first message
+    bytes data = 2;     // then the content, in any number of messages
+  }
+}
+
+message PutObjectResponse { ObjectInfo object = 1; }
+
+message InitiateUploadRequest { ObjectLocation location = 1; }
+message InitiateUploadResponse { uint64 upload_id = 1; }
+
+message UploadPartRequest {
+  message Header {
+    uint64 upload_id = 1;
+    uint32 part_number = 2;  // 1-based; re-sending a number replaces that part
+  }
+  oneof item {
+    Header header = 1;
+    bytes data = 2;
+  }
+}
+
+message PartInfo {
+  uint32 part_number = 1;
+  uint64 size = 2;
+  uint32 checksum = 3;
+}
+
+message UploadPartResponse { PartInfo part = 1; }
+
+message UploadRequest { uint64 upload_id = 1; }
+message ListPartsResponse { repeated PartInfo parts = 1; }
+
+message CompleteUploadRequest {
+  uint64 upload_id = 1;
+  Precondition precondition = 2;
+}
+
+message GetObjectRequest {
+  ObjectLocation location = 1;
+  uint64 generation = 2;  // 0 = latest
+  uint64 offset = 3;
+  uint64 length = 4;      // 0 = to the end
+}
+
+message GetObjectResponse {
+  oneof item {
+    ObjectInfo info = 1;  // first message
+    bytes data = 2;
+  }
+}
+
+message HeadObjectRequest {
+  ObjectLocation location = 1;
+  uint64 generation = 2;  // 0 = latest
+}
+
+message DeleteObjectRequest {
+  ObjectLocation location = 1;
+  Precondition precondition = 2;
+  uint64 generation = 3;  // non-zero: permanently delete exactly that version
+}
+
+message DeleteObjectResponse {
+  uint64 delete_marker_generation = 1;  // non-zero when Versioning added a delete marker
+}
+
+message ListObjectsRequest {
+  string tenant = 1;
+  string bucket = 2;
+  string prefix = 3;
+  string start_after = 4;
+  uint32 limit = 5;  // 0 = server default
+}
+
+message ListObjectsResponse {
+  repeated ObjectInfo objects = 1;
+  string next_start_after = 2;  // empty at the end
+}
+
+message ListVersionsRequest { ObjectLocation location = 1; }
+message ListVersionsResponse { repeated ObjectInfo versions = 1; }
+
+service Storage {
+  rpc CreateTenant(CreateTenantRequest) returns (TenantInfo);
+  rpc GetTenant(GetTenantRequest) returns (TenantInfo);
+  rpc SetQuota(SetQuotaRequest) returns (TenantInfo);
+  rpc SetClusterConfig(ClusterConfig) returns (ClusterConfig);
+
+  rpc CreateBucket(CreateBucketRequest) returns (BucketInfo);
+  rpc DeleteBucket(BucketRequest) returns (Empty);
+  rpc GetBucket(BucketRequest) returns (BucketInfo);
+  rpc ListBuckets(ListBucketsRequest) returns (ListBucketsResponse);
+  rpc SetBucketConfig(SetBucketConfigRequest) returns (BucketInfo);
+
+  rpc PutObject(stream PutObjectRequest) returns (PutObjectResponse);
+  rpc InitiateUpload(InitiateUploadRequest) returns (InitiateUploadResponse);
+  rpc UploadPart(stream UploadPartRequest) returns (UploadPartResponse);
+  rpc ListParts(UploadRequest) returns (ListPartsResponse);
+  rpc CompleteUpload(CompleteUploadRequest) returns (PutObjectResponse);
+  rpc AbortUpload(UploadRequest) returns (Empty);
+
+  rpc GetObject(GetObjectRequest) returns (stream GetObjectResponse);
+  rpc HeadObject(HeadObjectRequest) returns (ObjectInfo);
+  rpc DeleteObject(DeleteObjectRequest) returns (DeleteObjectResponse);
+  rpc ListObjects(ListObjectsRequest) returns (ListObjectsResponse);
+  rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+}

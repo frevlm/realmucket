@@ -1,0 +1,139 @@
+x-rmk: &rmk
+  image: realmucket:dev
+  build:
+    context: ../..
+    dockerfile: docker/runtime.Dockerfile
+  restart: unless-stopped
+  environment: &rmk-env
+    RMK_INSECURE: "true"
+    RMK_FDB_CLUSTER_FILE: /var/fdb/fdb.cluster
+    RMK_METRICS_PORT: "9100"
+
+services:
+  fdb:
+    image: foundationdb/foundationdb:7.3.69
+    restart: unless-stopped
+    environment:
+      FDB_NETWORKING_MODE: container
+      FDB_PORT: "4500"
+    volumes:
+      - fdb-cluster:/var/fdb
+      - fdb-data:/var/fdb/data
+
+  fdb-init:
+    image: foundationdb/foundationdb:7.3.69
+    depends_on: [fdb]
+    restart: "no"
+    volumes:
+      - fdb-cluster:/var/fdb
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        # "configure new" fails with "Database already exists" on later runs; that is the idempotent case.
+        for i in $$(seq 1 30); do
+          out=$$(fdbcli -C /var/fdb/fdb.cluster --timeout 10 --exec "configure new single ssd" 2>&1)
+          echo "$$out"
+          case "$$out" in
+            *"Database created"*|*"already exists"*) exit 0 ;;
+          esac
+          sleep 2
+        done
+        exit 1
+
+  datanode1:
+    <<: *rmk
+    command: ["rmk-datanode"]
+    depends_on:
+      fdb-init: {condition: service_completed_successfully}
+    environment:
+      <<: *rmk-env
+      RMK_NODE_ID: dn1
+      RMK_ADVERTISE_ADDRESS: datanode1:7001
+      RMK_DATA_DIR: /var/lib/rmk/data
+      RMK_ZONE: z1
+    volumes:
+      - fdb-cluster:/var/fdb:ro
+      - datanode1-data:/var/lib/rmk/data
+
+  datanode2:
+    <<: *rmk
+    command: ["rmk-datanode"]
+    depends_on:
+      fdb-init: {condition: service_completed_successfully}
+    environment:
+      <<: *rmk-env
+      RMK_NODE_ID: dn2
+      RMK_ADVERTISE_ADDRESS: datanode2:7001
+      RMK_DATA_DIR: /var/lib/rmk/data
+      RMK_ZONE: z2
+    volumes:
+      - fdb-cluster:/var/fdb:ro
+      - datanode2-data:/var/lib/rmk/data
+
+  datanode3:
+    <<: *rmk
+    command: ["rmk-datanode"]
+    depends_on:
+      fdb-init: {condition: service_completed_successfully}
+    environment:
+      <<: *rmk-env
+      RMK_NODE_ID: dn3
+      RMK_ADVERTISE_ADDRESS: datanode3:7001
+      RMK_DATA_DIR: /var/lib/rmk/data
+      RMK_ZONE: z3
+    volumes:
+      - fdb-cluster:/var/fdb:ro
+      - datanode3-data:/var/lib/rmk/data
+
+  datanode4:
+    <<: *rmk
+    command: ["rmk-datanode"]
+    depends_on:
+      fdb-init: {condition: service_completed_successfully}
+    environment:
+      <<: *rmk-env
+      RMK_NODE_ID: dn4
+      RMK_ADVERTISE_ADDRESS: datanode4:7001
+      RMK_DATA_DIR: /var/lib/rmk/data
+      RMK_ZONE: z1
+    volumes:
+      - fdb-cluster:/var/fdb:ro
+      - datanode4-data:/var/lib/rmk/data
+
+  controller:
+    <<: *rmk
+    command: ["rmk-controller"]
+    depends_on:
+      fdb-init: {condition: service_completed_successfully}
+    environment:
+      <<: *rmk-env
+      RMK_MASTER_KEY_DIR: /etc/realmucket/master-keys
+      RMK_CHUNK_CAPACITY_BYTES: "268435456"
+      RMK_REPAIR_DELAY_SECONDS: "60"
+    volumes:
+      - fdb-cluster:/var/fdb:ro
+      - ./master-keys:/etc/realmucket/master-keys:ro
+
+  gateway:
+    <<: *rmk
+    command: ["rmk-gateway"]
+    depends_on:
+      fdb-init: {condition: service_completed_successfully}
+    environment:
+      <<: *rmk-env
+      RMK_MASTER_KEY_DIR: /etc/realmucket/master-keys
+      # Must stay below the Controller's RMK_CHUNK_CAPACITY_BYTES minus 92 bytes (§6 safety rule 5).
+      RMK_MAX_PART_BYTES: "134217728"
+    ports:
+      - "${RMK_GATEWAY_PORT:-7000}:7000"
+    volumes:
+      - fdb-cluster:/var/fdb:ro
+      - ./master-keys:/etc/realmucket/master-keys:ro
+
+volumes:
+  fdb-cluster:
+  fdb-data:
+  datanode1-data:
+  datanode2-data:
+  datanode3-data:
+  datanode4-data:

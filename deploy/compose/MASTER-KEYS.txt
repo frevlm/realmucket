@@ -1,0 +1,1 @@
+Development keys only. Never use these for real data; generate production keys with `openssl rand -hex 32`.

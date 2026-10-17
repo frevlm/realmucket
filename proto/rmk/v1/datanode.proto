@@ -1,0 +1,88 @@
+// Internal API of a Data Node. Only Gateways, the Controller and other Data Nodes call it.
+// A Data Node knows Chunks and bytes, never Object names (ADR 0001).
+syntax = "proto3";
+
+package rmk.internal.v1;
+
+message Empty {}
+
+// A replica file holds a whole Chunk; a shard file holds one erasure-coded shard. Both can
+// exist for the same chunk_id on one node while a Chunk is being converted, so every call
+// names which file it means.
+message FileRef {
+  uint64 chunk_id = 1;
+  bool shard = 2;
+  uint32 shard_index = 3;  // meaningful only when shard is true
+}
+
+message CreateChunkRequest {
+  FileRef file = 1;
+  uint64 capacity = 2;  // file size limit, header included
+  uint32 data_units = 3;
+  uint32 parity_units = 4;
+}
+
+message StatResponse {
+  bool exists = 1;
+  uint64 size = 2;  // current file size, header included
+  uint64 capacity = 3;
+  uint32 data_units = 4;
+  uint32 parity_units = 5;
+}
+
+message WriteRequest {
+  message Header {
+    FileRef file = 1;
+    uint64 offset = 2;  // must not lie before the current end
+  }
+  oneof item {
+    Header header = 1;  // first message
+    bytes data = 2;     // then the bytes, written back to back from `offset`
+  }
+}
+
+message WriteResponse {
+  uint64 offset = 1;
+  uint64 length = 2;
+  uint32 crc32c = 3;  // of the bytes as written; durable (fsynced) when this returns
+}
+
+message ReadRequest {
+  FileRef file = 1;
+  uint64 offset = 2;  // >= 64 (the header is never served)
+  uint64 length = 3;
+}
+
+message ReadResponse { bytes data = 1; }  // up to 1 MiB per message
+
+message CopyChunkRequest {
+  FileRef file = 1;
+  string source_address = 2;  // pull the whole file from this Data Node
+}
+
+message EncodeChunkRequest {
+  uint64 chunk_id = 1;  // a local Sealed replica
+  uint32 data_units = 2;
+  uint32 parity_units = 3;
+  repeated string target_addresses = 4;  // shard i goes to target_addresses[i]
+}
+
+message RebuildShardRequest {
+  uint64 chunk_id = 1;
+  uint32 shard_index = 2;   // the shard to recreate locally
+  uint64 logical_size = 3;  // ChunkInfo.size
+  uint32 data_units = 4;
+  uint32 parity_units = 5;
+  repeated string source_addresses = 6;  // per shard index; empty string = unavailable
+}
+
+service DataNode {
+  rpc CreateChunk(CreateChunkRequest) returns (Empty);
+  rpc Stat(FileRef) returns (StatResponse);
+  rpc Write(stream WriteRequest) returns (WriteResponse);
+  rpc Read(ReadRequest) returns (stream ReadResponse);
+  rpc DeleteChunk(FileRef) returns (Empty);
+  rpc CopyChunkFrom(CopyChunkRequest) returns (Empty);
+  rpc EncodeChunk(EncodeChunkRequest) returns (Empty);
+  rpc RebuildShard(RebuildShardRequest) returns (Empty);
+}
