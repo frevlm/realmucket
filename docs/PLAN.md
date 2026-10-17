@@ -86,7 +86,7 @@ Lifecycle Rule、异地复制（ADR 0014）、自研元数据存储（ADR 0002�
 
 1. `deploy/k8s/fdb/foundationdbcluster.yaml` 缺少 FDB pod 的 ServiceAccount 和 RBAC。operator 默认使用 unified image（`fdb-kubernetes-monitor`），它要靠修改自己 Pod 的 annotation 来上报 locality；用 default ServiceAccount 时没有权限，operator 一直报 `Could only select 0 processes, but 3 are required`，集群永远初始化不了。已加上 ServiceAccount、Role、RoleBinding（pods 的 get/list/watch/update/patch，与 operator 官方示例一致），并在 `processes.general.podTemplate` 里指定这个 ServiceAccount。
 2. Gateway 和 Controller 读不到 Master Key：Secret 以 0400 挂载，文件属主是 root，而这两个 pod 没有设置 `fsGroup`（Data Node 设置了），所以 uid 10001 读取失败，启动时报 `cannot read /etc/realmucket/master-keys/active`。已在 `gateway.yaml` 和 `controller.yaml` 的 pod securityContext 里加上 `fsGroup: 10001`，文件变成 `0440 root:10001`。
-3. Data Node 带着空盘以同一个 ID 回来后，丢失的副本修不回来。scrub 能发现文件丢失，但 `replacement()` 会排除这个 Chunk 的所有持有者，其中也包括丢文件的那个节点本身。只有 3 个 Data Node 时就再也找不到目标节点，日志不停地报 `no healthy node with room`，副本数一直停在 2/3。已修改 `src/controller/controller.cpp`：其他节点都放不下时，把这个槽位原来的持有者作为最后的选择。新增测试 `ControllerTest.ScrubRestoresAMissingReplicaOnItsOwnHolderWhenNoOtherNodeFits`，确认它在修复前失败、修复后通过。
+3. Data Node 带着空盘以同一个 ID 回来后，丢失的副本修不回来。scrub 能发现文件丢失，但 `replacement()` 会排除这个 Chunk 的所有持有者，其中也包括丢文件的那个节点本身。只有 3 个 Data Node 时就再也找不到目标节点，日志不停地报 `no healthy node with room`，副本数一直停在 2/3。已修改 `services/controller/src/controller.cpp`：其他节点都放不下时，把这个槽位原来的持有者作为最后的选择。新增测试 `ControllerTest.ScrubRestoresAMissingReplicaOnItsOwnHolderWhenNoOtherNodeFits`，确认它在修复前失败、修复后通过。
 
 观察到但没有修改的问题：
 

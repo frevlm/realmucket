@@ -1,6 +1,6 @@
 # FoundationDB key layout
 
-Implementation: `include/rmk/fdb_stores.hpp`, `src/fdb/`. FDB API version 730. Changing anything
+Implementation: `libs/fdb/include/rmk/fdb/fdb_stores.hpp`, `libs/fdb/src/`. FDB API version 730. Changing anything
 below after deployment needs a migration (ADR 0010: the layout is permanent).
 
 ## Encoding

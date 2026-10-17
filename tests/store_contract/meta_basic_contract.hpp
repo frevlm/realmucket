@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "rmk/crc32c.hpp"
+#include "rmk/core/crc32c.hpp"
 #include "store_contract/meta_fixture.hpp"
 
 using namespace rmk;

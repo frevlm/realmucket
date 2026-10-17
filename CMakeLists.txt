@@ -24,50 +24,43 @@ find_library(FDB_LIBRARY fdb_c)
 
 set(RMK_WARNINGS -Wall -Wextra -Wpedantic -Werror)
 
-# rmk_module(<target> <source dir> [deps...]): a static library from every .cpp in <dir>.
+# rmk_module(<target> <module dir> [deps...]): a static library from <dir>/src/*.cpp.
+# Public headers live in <dir>/include, so a module owns its headers, sources and tests.
 function(rmk_module target dir)
-    file(GLOB sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${dir}/*.cpp)
+    file(GLOB sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${dir}/src/*.cpp)
     if(NOT sources)
         return()
     endif()
     add_library(${target} STATIC ${sources})
-    target_include_directories(${target} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(${target} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/${dir}/include)
     target_compile_options(${target} PRIVATE ${RMK_WARNINGS})
     target_link_libraries(${target} PUBLIC ${ARGN})
 endfunction()
 
-# rmk_program(<target> <source dir> [deps...]): an executable from every .cpp in <dir>.
-function(rmk_program target dir)
-    file(GLOB sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${dir}/*.cpp)
-    if(NOT sources)
-        return()
-    endif()
-    add_executable(${target} ${sources})
+# rmk_program(<target> <main.cpp> [deps...]): an executable from one source file.
+function(rmk_program target main)
+    add_executable(${target} ${CMAKE_CURRENT_SOURCE_DIR}/${main})
     target_compile_options(${target} PRIVATE ${RMK_WARNINGS})
     target_link_libraries(${target} PRIVATE ${ARGN})
     install(TARGETS ${target} RUNTIME DESTINATION bin)
 endfunction()
 
-# ----- Libraries
+# ----- Libraries (libs/<module>/{include,src,test})
 
-file(GLOB core_sources CONFIGURE_DEPENDS src/*.cpp src/stores/*.cpp)
-add_library(rmk_core STATIC ${core_sources})
-target_include_directories(rmk_core PUBLIC include)
-target_compile_options(rmk_core PRIVATE ${RMK_WARNINGS})
-target_link_libraries(rmk_core PUBLIC Threads::Threads)
-
-rmk_module(rmk_ec src/ec rmk_core)
+rmk_module(rmk_core libs/core Threads::Threads)
+rmk_module(rmk_stores libs/stores rmk_core)
+rmk_module(rmk_ec libs/ec rmk_core)
 
 if(OpenSSL_FOUND)
-    rmk_module(rmk_crypto src/crypto rmk_core OpenSSL::Crypto)
+    rmk_module(rmk_crypto libs/crypto rmk_core OpenSSL::Crypto)
 endif()
 
 if(CURL_FOUND)
-    rmk_module(rmk_http src/http rmk_core CURL::libcurl)
+    rmk_module(rmk_http libs/http rmk_core CURL::libcurl)
 endif()
 
 if(FDB_INCLUDE_DIR AND FDB_LIBRARY)
-    rmk_module(rmk_fdb src/fdb rmk_core ${FDB_LIBRARY})
+    rmk_module(rmk_fdb libs/fdb rmk_core ${FDB_LIBRARY})
     if(TARGET rmk_fdb)
         target_include_directories(rmk_fdb PUBLIC ${FDB_INCLUDE_DIR})
         target_compile_definitions(rmk_fdb PUBLIC FDB_API_VERSION=730 RMK_HAVE_FDB=1)
@@ -102,37 +95,42 @@ if(RMK_HAVE_RPC)
     target_link_libraries(rmk_proto PUBLIC gRPC::grpc++ protobuf::libprotobuf)
 
     # Status mapping, Data Node client (replicated writes, replica/EC reads), store factory.
-    set(store_libs rmk_core)
+    set(store_libs rmk_core rmk_stores)
     if(TARGET rmk_fdb)
         list(APPEND store_libs rmk_fdb)
     endif()
-    rmk_module(rmk_rpc src/rpc rmk_proto rmk_core rmk_ec rmk_crypto rmk_http ${store_libs})
+    rmk_module(rmk_rpc libs/rpc rmk_proto rmk_ec rmk_crypto rmk_http ${store_libs})
 
-    rmk_module(rmk_datanode_lib src/datanode rmk_rpc rmk_http)
-    rmk_program(rmk-datanode src/datanode/main rmk_datanode_lib)
-    rmk_module(rmk_gateway_lib src/gateway rmk_rpc rmk_crypto rmk_http)
-    rmk_program(rmk-gateway src/gateway/main rmk_gateway_lib)
-    rmk_module(rmk_controller_lib src/controller rmk_rpc rmk_crypto rmk_http)
-    rmk_program(rmk-controller src/controller/main rmk_controller_lib)
-    # Everything in one process on in-memory stores: local development without FoundationDB.
-    if(TARGET rmk_datanode_lib AND TARGET rmk_gateway_lib AND TARGET rmk_controller_lib)
-        rmk_program(rmk-dev src/dev rmk_datanode_lib rmk_gateway_lib rmk_controller_lib)
-    endif()
-
-    # Client SDK: one public header, sdk/include/rmk/client.hpp.
-    file(GLOB sdk_sources CONFIGURE_DEPENDS sdk/src/*.cpp)
-    if(sdk_sources)
-        add_library(rmk_client STATIC ${sdk_sources})
-        target_include_directories(rmk_client PUBLIC sdk/include PRIVATE include)
+    # Client SDK: one public header, libs/client/include/rmk/client.hpp.
+    file(GLOB client_sources CONFIGURE_DEPENDS libs/client/src/*.cpp)
+    if(client_sources)
+        add_library(rmk_client STATIC ${client_sources})
+        target_include_directories(rmk_client PUBLIC libs/client/include)
         target_compile_options(rmk_client PRIVATE ${RMK_WARNINGS})
         target_link_libraries(rmk_client PRIVATE rmk_proto rmk_core)
         install(TARGETS rmk_client ARCHIVE DESTINATION lib)
-        install(DIRECTORY sdk/include/ DESTINATION include)
+        install(DIRECTORY libs/client/include/ DESTINATION include)
     endif()
-    rmk_program(rmkctl tools/rmkctl rmk_client)
+
+    # ----- Services (services/<name>/{include,src,test,main.cpp})
+
+    rmk_module(rmk_datanode_lib services/datanode rmk_rpc rmk_http)
+    rmk_program(rmk-datanode services/datanode/main.cpp rmk_datanode_lib)
+    rmk_module(rmk_gateway_lib services/gateway rmk_rpc rmk_crypto rmk_http)
+    rmk_program(rmk-gateway services/gateway/main.cpp rmk_gateway_lib)
+    rmk_module(rmk_controller_lib services/controller rmk_rpc rmk_crypto rmk_http)
+    rmk_program(rmk-controller services/controller/main.cpp rmk_controller_lib)
+
+    # ----- Apps (apps/<name>/main.cpp)
+
+    # Everything in one process on in-memory stores: local development without FoundationDB.
+    rmk_program(rmk-dev apps/dev/main.cpp
+        rmk_datanode_lib rmk_gateway_lib rmk_controller_lib)
+    rmk_program(rmkctl apps/rmkctl/main.cpp rmk_client)
 endif()
 
-# ----- Tests: one executable per folder under tests/, linked to the named libraries.
+# ----- Tests: one executable per module, from <dir>/*.cpp, linked to the named libraries.
+# Cross-module tests (e2e) and the shared contract suites live in the top-level tests/.
 
 if(RMK_BUILD_TESTS)
     find_package(GTest CONFIG)
@@ -148,13 +146,14 @@ if(RMK_BUILD_TESTS)
     enable_testing()
     include(GoogleTest)
 
-    function(rmk_tests name)
+    # rmk_tests(<name> <test dir> [deps...])
+    function(rmk_tests name dir)
         foreach(dep ${ARGN})
             if(NOT TARGET ${dep})
                 return()
             endif()
         endforeach()
-        file(GLOB sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/${name}/*.cpp)
+        file(GLOB sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/${dir}/*.cpp)
         if(NOT sources)
             return()
         endif()
@@ -165,14 +164,14 @@ if(RMK_BUILD_TESTS)
         gtest_discover_tests(rmk_${name}_tests DISCOVERY_TIMEOUT 30)
     endfunction()
 
-    rmk_tests(core rmk_core)
-    rmk_tests(stores rmk_core)
-    rmk_tests(ec rmk_ec)
-    rmk_tests(crypto rmk_crypto)
-    rmk_tests(http rmk_http)
-    rmk_tests(fdb rmk_fdb)
-    rmk_tests(rpc rmk_rpc rmk_datanode_lib)
-    rmk_tests(gateway rmk_gateway_lib rmk_datanode_lib)
-    rmk_tests(controller rmk_controller_lib rmk_datanode_lib)
-    rmk_tests(e2e rmk_client rmk_gateway_lib rmk_datanode_lib rmk_controller_lib)
+    rmk_tests(core libs/core/test rmk_core)
+    rmk_tests(stores libs/stores/test rmk_stores)
+    rmk_tests(ec libs/ec/test rmk_ec)
+    rmk_tests(crypto libs/crypto/test rmk_crypto)
+    rmk_tests(http libs/http/test rmk_http)
+    rmk_tests(fdb libs/fdb/test rmk_fdb)
+    rmk_tests(rpc libs/rpc/test rmk_rpc rmk_datanode_lib)
+    rmk_tests(gateway services/gateway/test rmk_gateway_lib rmk_datanode_lib)
+    rmk_tests(controller services/controller/test rmk_controller_lib rmk_datanode_lib)
+    rmk_tests(e2e tests/e2e rmk_client rmk_gateway_lib rmk_datanode_lib rmk_controller_lib)
 endif()

@@ -1,7 +1,7 @@
 # Implementation guide
 
 Engineering contract for phases 2–4 of `docs/PLAN.md`. Decisions live in `docs/adr/`,
-vocabulary in `CONTEXT.md`. Interfaces are the headers in `include/rmk/` and the protos in
+vocabulary in `CONTEXT.md`. Interfaces are the headers in `libs/*/include/` and `services/*/include/` and the protos in
 `proto/rmk/v1/`; this document pins down the behaviour those signatures cannot express.
 
 ## 1. Build and test
@@ -14,22 +14,33 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-`CMakeLists.txt` builds each module from every `.cpp` in its directory and each test folder
-`tests/<module>/` into `rmk_<module>_tests`. Adding files never requires editing CMake.
+`CMakeLists.txt` builds a module from every `.cpp` in its `src/` directory and its tests from
+every `.cpp` in its `test/` directory into `rmk_<module>_tests`. A module owns its headers,
+sources and tests; adding files never requires editing CMake.
 
-| Module | Sources | Tests | Depends on |
-|---|---|---|---|
-| core | `src/*.cpp`, `src/stores/` | `tests/core`, `tests/stores` | — |
-| ec | `src/ec` | `tests/ec` | core |
-| crypto | `src/crypto` | `tests/crypto` | OpenSSL |
-| http (+metrics) | `src/http` | `tests/http` | libcurl |
-| fdb | `src/fdb` | `tests/fdb` | libfdb_c (Linux image / CI only) |
-| rpc | `src/rpc` | `tests/rpc` | gRPC, all of the above |
-| datanode | `src/datanode` | (via rpc/e2e) | rpc |
-| gateway | `src/gateway`, main in `src/gateway/main` | `tests/gateway` | rpc |
-| controller | `src/controller`, main in `src/controller/main` | `tests/controller` | rpc |
-| sdk | `sdk/include/rmk/client.hpp`, `sdk/src` | e2e | gRPC |
-| rmkctl | `tools/rmkctl` | e2e | sdk |
+```
+libs/<module>/{include/rmk/<module>/, src/, test/}
+services/<name>/{include/rmk/<name>/, src/, test/, main.cpp}
+apps/<name>/main.cpp
+tests/e2e/            cross-module tests
+tests/store_contract/ contract suites shared by the memory and FoundationDB stores
+```
+
+| Module | Directory | Depends on |
+|---|---|---|
+| core (types, errors, names, config, env, crc32c, chunk file, store interfaces) | `libs/core` | — |
+| stores (in-memory) | `libs/stores` | core |
+| ec | `libs/ec` | core |
+| crypto | `libs/crypto` | OpenSSL |
+| http (+metrics) | `libs/http` | libcurl |
+| fdb | `libs/fdb` | libfdb_c (Linux image / CI only) |
+| rpc | `libs/rpc` | gRPC, all of the above |
+| client (SDK, public header `rmk/client.hpp`) | `libs/client` | gRPC |
+| datanode | `services/datanode` | rpc |
+| gateway | `services/gateway` | rpc |
+| controller | `services/controller` | rpc |
+| rmk-dev | `apps/dev` | the three services |
+| rmkctl | `apps/rmkctl` | client |
 
 FoundationDB tests run where libfdb_c exists (the Linux dev image `docker/dev.Dockerfile`)
 against a server started with `docker run -d --name rmk-fdb -p 4500:4500 foundationdb/foundationdb:7.3.69`
@@ -49,8 +60,8 @@ exceptions at the edge), no global mutable state except metrics, comments say wh
 
 ## 3. Store semantics (MetaStore, IdentityStore, ClusterStore)
 
-All three have an in-memory implementation (`include/rmk/memory_stores.hpp`) and a
-FoundationDB implementation (`include/rmk/fdb_stores.hpp`). Both must pass the shared
+All three have an in-memory implementation (`libs/stores/include/rmk/stores/memory_stores.hpp`) and a
+FoundationDB implementation (`libs/fdb/include/rmk/fdb/fdb_stores.hpp`). Both must pass the shared
 contract suite in `tests/store_contract/`, which is instantiated once per implementation.
 
 MetaStore details:
@@ -122,7 +133,7 @@ Gateway port.
 1. Check the Tenant is named and the minimum SDK version, load the Bucket.
 2. `crypto::new_data_key`, then `begin_upload` with the wrapped key.
 3. Cut the content into Parts of `RMK_PART_SIZE` (single `PutObject` streams too). Per Part:
-   encrypt, then hand it to the **ChunkWriter** (`src/rpc`), which:
+   encrypt, then hand it to the **ChunkWriter** (`libs/rpc`), which:
    - holds writer leases on up to `RMK_WRITERS_PER_POLICY` open Chunks per Storage Policy
      (`claim_open_chunk`, lease `RMK_WRITER_LEASE_SECONDS`, renewed in the background);
    - on claiming, `Stat`s every replica and starts at the **largest** size seen (bytes a crashed
@@ -142,7 +153,7 @@ never exceed any replica's size, and sealing at the writer's offset is safe.
 
 ### Reading (Gateway, Controller)
 
-The **ChunkReader** (`src/rpc`) reads an Extent given its ChunkInfo:
+The **ChunkReader** (`libs/rpc`) reads an Extent given its ChunkInfo:
 - replicated (open or sealed): try replicas in random order, verify `Extent.crc32c`, fall back
   on error or mismatch;
 - erasure coded: `ec::map_range` → read pieces from shard nodes; if a shard is unavailable,

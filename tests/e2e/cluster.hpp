@@ -25,13 +25,13 @@
 #include <vector>
 
 #include "rmk/client.hpp"
-#include "rmk/controller.hpp"
-#include "rmk/crc32c.hpp"
-#include "rmk/crypto.hpp"
-#include "rmk/datanode.hpp"
-#include "rmk/gateway.hpp"
-#include "rmk/memory_stores.hpp"
-#include "rmk/rpc.hpp"
+#include "rmk/controller/controller.hpp"
+#include "rmk/core/crc32c.hpp"
+#include "rmk/crypto/crypto.hpp"
+#include "rmk/datanode/datanode.hpp"
+#include "rmk/gateway/gateway.hpp"
+#include "rmk/stores/memory_stores.hpp"
+#include "rmk/rpc/rpc.hpp"
 
 namespace rmk::e2e {
 

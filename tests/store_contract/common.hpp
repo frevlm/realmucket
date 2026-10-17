@@ -6,9 +6,9 @@
 #include <functional>
 #include <memory>
 
-#include "rmk/cluster_store.hpp"
-#include "rmk/config_store.hpp"
-#include "rmk/meta_store.hpp"
+#include "rmk/core/cluster_store.hpp"
+#include "rmk/core/config_store.hpp"
+#include "rmk/core/meta_store.hpp"
 
 namespace rmk::contract {
 
