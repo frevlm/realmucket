@@ -87,6 +87,14 @@ public:
         if (fail_put_part) return rmk::fail(rmk::Errc::io_error, "injected put_part failure");
         return inner_->put_part(id, part, now);
     }
+    rmk::Result<rmk::Part> put_inline_part(rmk::UploadId id, const rmk::Part& part, std::span<const std::byte> bytes,
+                                           rmk::Clock::time_point now) override {
+        if (fail_put_part) return rmk::fail(rmk::Errc::io_error, "injected put_part failure");
+        return inner_->put_inline_part(id, part, bytes, now);
+    }
+    rmk::Result<std::vector<std::byte>> read_inline(const rmk::Extent& extent) override {
+        return inner_->read_inline(extent);
+    }
     rmk::Result<rmk::PendingUpload> get_upload(rmk::UploadId id, rmk::Clock::time_point now) override {
         return inner_->get_upload(id, now);
     }
@@ -169,6 +177,7 @@ protected:
         chunks = std::move(*opened);
 
         options.part_size = kPartSize;
+        options.inline_max_bytes = 0;  // most tests are about Chunks; the inline ones turn it on
         options.cluster_config_cache = std::chrono::seconds{0};
         start_gateway();
 
@@ -467,6 +476,95 @@ TEST_F(GatewayTest, StoredBytesAreCiphertext) {
     std::string data;
     ASSERT_TRUE(get(loc("data", "secret"), &data).ok());
     EXPECT_TRUE(data == plaintext);
+}
+
+// ----- Inline Parts: small Parts live in the metadata, not in a Chunk.
+
+TEST_F(GatewayTest, InlineThresholdDecidesWhereTheBytesGo) {
+    constexpr std::uint64_t kLimit = 1000;
+    options.inline_max_bytes = kLimit;
+    restart_gateway();
+    const auto before = chunk_files_content().size();
+
+    const std::string fits = random_text(kLimit - rmk::crypto::kPartOverhead, 11);
+    ASSERT_TRUE(put(loc("data", "fits"), fits).ok());
+    EXPECT_EQ(chunk_files_content().size(), before);
+    std::string data;
+    ASSERT_TRUE(get(loc("data", "fits"), &data).ok());
+    EXPECT_TRUE(data == fits);
+
+    const std::string over = random_text(kLimit - rmk::crypto::kPartOverhead + 1, 12);
+    ASSERT_TRUE(put(loc("data", "over"), over).ok());
+    EXPECT_GT(chunk_files_content().size(), before);
+    ASSERT_TRUE(get(loc("data", "over"), &data).ok());
+    EXPECT_TRUE(data == over);
+
+    auto inline_head = meta->head({{"alpha", "data"}, "fits"});
+    ASSERT_TRUE(inline_head.has_value());
+    EXPECT_EQ(inline_head->parts.at(0).extent.chunk_id, rmk::kInlineChunk);
+    auto chunk_head = meta->head({{"alpha", "data"}, "over"});
+    ASSERT_TRUE(chunk_head.has_value());
+    EXPECT_NE(chunk_head->parts.at(0).extent.chunk_id, rmk::kInlineChunk);
+}
+
+TEST_F(GatewayTest, InlineObjectsReadBackWholeAndByRange) {
+    options.inline_max_bytes = 2 * kPartSize;
+    restart_gateway();
+    const std::string content = random_text(3 * kPartSize + 321, 13);  // four inline Parts
+    ASSERT_TRUE(put(loc("data", "many"), content).ok());
+    auto head = meta->head({{"alpha", "data"}, "many"});
+    ASSERT_TRUE(head.has_value());
+    ASSERT_EQ(head->parts.size(), 4u);
+    for (const auto& part : head->parts) EXPECT_EQ(part.extent.chunk_id, rmk::kInlineChunk);
+
+    std::string data;
+    ASSERT_TRUE(get(loc("data", "many"), &data).ok());
+    EXPECT_TRUE(data == content);
+    ASSERT_TRUE(get(loc("data", "many"), &data, kPartSize - 10, 100).ok());  // across a Part boundary
+    EXPECT_TRUE(data == content.substr(kPartSize - 10, 100));
+}
+
+TEST_F(GatewayTest, InlineAndChunkPartsMixInOneObject) {
+    options.inline_max_bytes = 10'000;  // the full-size Part goes to a Chunk, the short tail inline
+    restart_gateway();
+    const std::string content = random_text(kPartSize + 500, 14);
+    ASSERT_TRUE(put(loc("data", "mixed"), content).ok());
+    auto head = meta->head({{"alpha", "data"}, "mixed"});
+    ASSERT_TRUE(head.has_value());
+    ASSERT_EQ(head->parts.size(), 2u);
+    EXPECT_NE(head->parts[0].extent.chunk_id, rmk::kInlineChunk);
+    EXPECT_EQ(head->parts[1].extent.chunk_id, rmk::kInlineChunk);
+    std::string data;
+    ASSERT_TRUE(get(loc("data", "mixed"), &data).ok());
+    EXPECT_TRUE(data == content);
+}
+
+TEST_F(GatewayTest, InlineBytesGoWithTheObject) {
+    options.inline_max_bytes = 10'000;
+    restart_gateway();
+    ASSERT_TRUE(put(loc("data", "short-lived"), "inline bytes").ok());
+    auto head = meta->head({{"alpha", "data"}, "short-lived"});
+    ASSERT_TRUE(head.has_value());
+    const rmk::Extent extent = head->parts.at(0).extent;
+    ASSERT_TRUE(meta->read_inline(extent).has_value());
+    ASSERT_TRUE(remove(loc("data", "short-lived")).ok());
+    EXPECT_EQ(meta->read_inline(extent).error().code, rmk::Errc::not_found);
+    EXPECT_EQ(garbage_bytes(), 0u);
+}
+
+TEST_F(GatewayTest, TurningInliningOffKeepsEarlierObjectsReadable) {
+    options.inline_max_bytes = 10'000;
+    restart_gateway();
+    ASSERT_TRUE(put(loc("data", "before"), "written while inlining was on").ok());
+    options.inline_max_bytes = 0;
+    restart_gateway();
+    std::string data;
+    ASSERT_TRUE(get(loc("data", "before"), &data).ok());
+    EXPECT_EQ(data, "written while inlining was on");
+    ASSERT_TRUE(put(loc("data", "after"), "written after").ok());
+    auto head = meta->head({{"alpha", "data"}, "after"});
+    ASSERT_TRUE(head.has_value());
+    EXPECT_NE(head->parts.at(0).extent.chunk_id, rmk::kInlineChunk);
 }
 
 TEST_F(GatewayTest, ConditionalWrites) {

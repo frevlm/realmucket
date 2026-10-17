@@ -1,8 +1,9 @@
 # Metadata store on RocksDB
 
 `libs/rocksdb` implements `MetaStore` and `ConfigStore` for a single machine; `realmucketd` uses it for all
-object metadata (`<data_dir>/meta`, or `RMK_META_DIR`). The key layout is the one in `fdb-layout.md`, with the
-differences below. The engine was chosen by measurement (`tools/metabench`, results in `PERFORMANCE.md`).
+object metadata (`<data_dir>/meta`, or `RMK_META_DIR`). The key layout is in `metadata-layout.md`; this page is
+about how the database is driven. The engine was chosen by measurement (`tools/metabench`, results in
+`PERFORMANCE.md`).
 
 ## How it works
 
@@ -14,21 +15,23 @@ differences below. The engine was chosen by measurement (`tools/metabench`, resu
   a lazy transaction is released as soon as it is applied; a durable one waits until a flush that started after
   its commit has finished. One flush serves every transaction committed before it began.
 - **Reads** run on the caller's thread against a snapshot and never queue behind writes.
-- **Which calls are durable.** `begin_upload`, `put_part`, `abort_upload`, `reclaim_expired` and `ack_garbage`
+- **Which calls are durable.** `begin_upload`, `put_part`, `put_inline_part`, `abort_upload`, `reclaim_expired` and `ack_garbage`
   are lazy: after a crash the worst outcome is an upload that has to be redone, or garbage that is counted twice.
   Everything else flushes before it returns, in particular `commit_upload` (the object exists), `remove` and
   `remove_version` (the Data Key is gone for good), `relocate_part` (compaction may then delete the old chunk)
-  and `rewrap`.
+  and `rewrap`. `put_inline_part` is lazy like `put_part`, and its bytes ride in the same write-ahead log as
+  the `commit_upload` that follows, so that one flush makes the bytes and the object durable together.
 
-## Differences from the FoundationDB layout
+## Notes on the layout
 
-- A version is named by a stamp of 10 bytes whose first 8 are the Generation. Here the Generation comes from a
+- A version is named by a stamp of 10 bytes whose first 8 are the Generation. The Generation comes from a
   counter under key `Z gen`, taken by the first stamped write of a transaction and stored in the same batch, so a
   transaction that rolls back gives its number back, and Generations only ever grow, also across restarts.
-- No commit receipts (`R`): a commit is never in doubt here.
-- No cluster keys (`N`, `C`, `S`, `g`, `A`, `L`): there are no Data Nodes to describe.
+- A commit is never in doubt, so there are no commit receipts.
 - `clear_range` deletes the keys one by one (the batch index does not see range deletions).
-- Usage counters are read, changed and written inside the single writer instead of using atomic adds.
+- Usage counters are read, changed and written inside the single writer.
+- Small Parts are stored as values under `I` (inline Parts). The values go through the write-ahead log once and
+  through the LSM levels like any other value; `docs/PERFORMANCE.md` records what that cost in a sustained run.
 
 ## Operating notes
 

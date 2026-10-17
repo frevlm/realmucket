@@ -2,7 +2,7 @@
 //
 // One PUT is three transactions, as the Gateway issues them through MetaStore: begin_upload,
 // put_part and commit_upload; only the last one has to be on disk when it returns. The workload
-// writes the same kinds of keys the FoundationDB layout (docs/fdb-layout.md) does, with realistic
+// writes the same kinds of keys the FoundationDB layout (docs/metadata-layout.md) does, with realistic
 // key and value sizes, into a database that already holds --objects objects.
 #include <fcntl.h>
 #include <unistd.h>
@@ -95,7 +95,7 @@ Flags parse(int argc, char** argv) {
     return f;
 }
 
-// ----- Keys and values (docs/fdb-layout.md)
+// ----- Keys and values (docs/metadata-layout.md)
 
 std::string be64(std::uint64_t v) {
     std::string s(8, '\0');

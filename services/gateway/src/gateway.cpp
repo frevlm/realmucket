@@ -296,8 +296,12 @@ struct Gateway::Impl final : pb::Storage::Service {
     Result<Part> store_part(UploadId upload, const crypto::Key& key,
                             std::uint32_t number, std::span<const std::byte> plaintext) {
         const auto sealed = crypto::seal_part(key, number, plaintext);
-        const auto deadline = std::chrono::duration_cast<std::chrono::milliseconds>(options.compaction_grace) / 2;
         Part part{number, plaintext.size(), crc32c(plaintext), {}};
+        if (sealed.size() <= options.inline_max_bytes) {
+            part.extent.crc32c = crc32c(sealed);
+            return meta().put_inline_part(upload, part, sealed, Clock::now());
+        }
+        const auto deadline = std::chrono::duration_cast<std::chrono::milliseconds>(options.compaction_grace) / 2;
         for (int attempt = 0; attempt < kWriteAttempts; ++attempt) {
             auto extent = deps.writer->write(sealed);
             if (!extent) return std::unexpected(extent.error());
@@ -635,7 +639,7 @@ struct Gateway::Impl final : pb::Storage::Service {
                                              std::optional<ObjectMeta>& moved) {
         const Extent* extent = moved ? extent_of(*moved, part.number) : &part.extent;
         if (!extent) return fail(Errc::not_found, "part " + std::to_string(part.number) + " is gone");
-        auto stored = deps.reader->read(*extent);
+        auto stored = extent->chunk_id == kInlineChunk ? meta().read_inline(*extent) : deps.reader->read(*extent);
         if (stored || stored.error().code != Errc::not_found || moved) return stored;
         auto again = meta().head_version(version.ref, version.generation);
         if (!again) return std::unexpected(again.error());

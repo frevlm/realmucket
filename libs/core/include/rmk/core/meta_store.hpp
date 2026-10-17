@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,6 +42,15 @@ public:
     virtual Result<UploadId> begin_upload(const ObjectRef& target, const Encryption& encryption,
                                           Clock::time_point now) = 0;
     virtual Status put_part(UploadId id, const Part& part, Clock::time_point now) = 0;
+    // A Part small enough to live in the metadata: the bytes are stored in the same atomic step that
+    // registers the Part, so one flush covers both and no Chunk is involved. Only `number`, `size`,
+    // `checksum` and `extent.crc32c` (of `bytes`) of `part` are used; the returned Part carries the
+    // real Extent (chunk_id == kInlineChunk). Replacing a Part number frees the old bytes, and so does
+    // everything that would otherwise make an Extent garbage; inline bytes never reach peek_garbage.
+    virtual Result<Part> put_inline_part(UploadId id, const Part& part, std::span<const std::byte> bytes,
+                                         Clock::time_point now) = 0;
+    // The bytes of an inline Extent, verified against Extent.crc32c. not_found once they are gone.
+    virtual Result<std::vector<std::byte>> read_inline(const Extent& extent) = 0;
     virtual Result<PendingUpload> get_upload(UploadId id, Clock::time_point now) = 0;
     virtual Status abort_upload(UploadId id) = 0;
     // Parts must be numbered 1..N without gaps. Checks the Precondition against the latest

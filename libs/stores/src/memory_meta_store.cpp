@@ -62,6 +62,10 @@ MemoryMetaStore::MemoryMetaStore(std::chrono::seconds pending_upload_retention)
     : retention_(pending_upload_retention) {}
 
 void MemoryMetaStore::add_garbage_locked(const Extent& extent) {
+    if (extent.chunk_id == kInlineChunk) {
+        inline_.erase(extent.offset);
+        return;
+    }
     std::uint64_t id = ++last_garbage_;
     garbage_.emplace(id, GarbageEntry{id, extent});
 }
@@ -179,6 +183,31 @@ Result<UploadId> MemoryMetaStore::begin_upload(const ObjectRef& target, const En
 
 Status MemoryMetaStore::put_part(UploadId id, const Part& part, Clock::time_point now) {
     std::lock_guard lock(mutex_);
+    return put_part_locked(id, part, now);
+}
+
+Result<Part> MemoryMetaStore::put_inline_part(UploadId id, const Part& part, std::span<const std::byte> bytes,
+                                              Clock::time_point now) {
+    std::lock_guard lock(mutex_);
+    Part stored = part;
+    stored.extent = Extent{kInlineChunk, last_inline_ + 1, bytes.size(), part.extent.crc32c};
+    if (auto ok = put_part_locked(id, stored, now); !ok) return std::unexpected(ok.error());
+    ++last_inline_;
+    inline_[stored.extent.offset].assign(bytes.begin(), bytes.end());
+    return stored;
+}
+
+Result<std::vector<std::byte>> MemoryMetaStore::read_inline(const Extent& extent) {
+    if (extent.chunk_id != kInlineChunk) return fail(Errc::invalid_argument, "not an inline extent");
+    std::lock_guard lock(mutex_);
+    auto it = inline_.find(extent.offset);
+    if (it == inline_.end() || it->second.size() != extent.length)
+        return fail(Errc::not_found, "inline bytes " + std::to_string(extent.offset) + " are gone");
+    if (crc32c(it->second) != extent.crc32c) return fail(Errc::corruption, "inline bytes fail their checksum");
+    return it->second;
+}
+
+Status MemoryMetaStore::put_part_locked(UploadId id, const Part& part, Clock::time_point now) {
     auto it = uploads_.find(id);
     if (it == uploads_.end()) return fail(Errc::not_found, "no such upload");
     if (expired(it->second, now)) return fail(Errc::expired, "upload expired");

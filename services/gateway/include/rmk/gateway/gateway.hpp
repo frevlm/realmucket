@@ -17,6 +17,10 @@ namespace rmk::gateway {
 
 struct Options {
     std::uint64_t part_size = std::uint64_t{64} << 20;
+    // A Part whose stored bytes (plaintext + 28 bytes of encryption overhead) fit within this many
+    // bytes is kept in the metadata store instead of a Chunk: one flush then covers the bytes and
+    // the commit. 0 turns it off; Parts already stored inline stay readable.
+    std::uint64_t inline_max_bytes = std::uint64_t{32} << 10;
     std::uint32_t list_limit_max = 1000;
     std::chrono::seconds pending_upload_retention = std::chrono::days{7};
     std::chrono::seconds cluster_config_cache{30};
@@ -37,7 +41,7 @@ struct Dependencies {
     std::shared_ptr<GarbageSink> garbage;
 };
 
-// RMK_PART_SIZE,
+// RMK_PART_SIZE, RMK_INLINE_MAX_BYTES,
 // RMK_PENDING_UPLOAD_RETENTION_SECONDS, RMK_COMPACTION_GRACE_SECONDS, RMK_MAX_PART_BYTES,
 // RMK_MAX_BUFFERED_BYTES (docs/IMPLEMENTATION.md §6, §7).
 Result<Options> load_options(const EnvLookup& env);

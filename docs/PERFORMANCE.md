@@ -141,7 +141,7 @@ PUT, so it must be batched the same way; that is the requirement for the metadat
 ## Metadata engines (tools/metabench)
 
 `tools/metabench` (CMake option `RMK_BUILD_METABENCH`) commits the transactions of one PUT to candidate
-engines, with the key layout and sizes of `docs/fdb-layout.md`, into a database that already holds
+engines, with the key layout and sizes of `docs/metadata-layout.md`, into a database that already holds
 1,000,000 objects. A PUT is the three `MetaStore` calls the Gateway makes: `begin_upload` and `put_part`
 (which need not be on disk when they return) and `commit_upload` (which must). All engines sit behind the
 same single writer thread that gathers whatever queued up into one commit (group commit). For engines
@@ -236,3 +236,37 @@ on a Linux server where a flush costs a fraction of a millisecond this matters m
 
 Process-crash check: 40 objects written one by one, daemon killed with `kill -9`, restarted: all 40 intact.
 (A power cut is not simulated.)
+
+## Step 5: small Parts inside the metadata database (inline Parts)
+
+A Part up to `RMK_INLINE_MAX_BYTES` is written into the RocksDB write-ahead log together with its
+registration instead of into a Chunk, so a small PUT needs one flush (the commit) instead of two (chunk, then
+commit). Same script, same machine, 16 KiB objects, 8 s per phase, `RMK_INLINE_MAX_BYTES=0` against 32768 in
+the same session:
+
+| conc | PUT ops/s off | PUT ops/s on | PUT p50 ms off | PUT p50 ms on | GET ops/s off | GET ops/s on | GET p99 ms off | GET p99 ms on |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 121 | 227 | 8.07 | 4.15 | 10865 | 10946 | 0.17 | 0.16 |
+| 16 | 378 | 837 | 42.33 | 19.24 | 23328 | 23375 | 1.16 | 1.10 |
+| 256 | 4280 | 7360 | 57.52 | 33.66 | 20026 | 17904 | 24.98 | 27.65 |
+
+PUT is 1.7 to 2.2 times faster; GET is unchanged up to 16 workers and about 10 % lower with a 10 % worse p99 at
+256 (single short runs; they vary by that much on their own). The decision rule set beforehand (at least 1.6
+times at 1 and 16 workers, GET p99 no more than 20 % worse, no loss after `kill -9`) is met.
+
+Where it stops paying (6 s runs, PUT ops/s inline against Chunk, 1 / 16 / 256 workers):
+
+| object size | inline | Chunk |
+|---|---|---|
+| 4 KiB | 248 / 936 / 7788 | 125 / 369 / 4166 |
+| 64 KiB | 220 / 853 / 5488 | 132 / 408 / 4001 |
+| 128 KiB | 211 / 860 / 3677 | 143 / 436 / 3703 |
+
+At 128 KiB with 256 writers the disk bandwidth is the limit and the two are equal, so the default stays at
+32 KiB; 64 KiB would also pay.
+
+Sustained 25 s at 256 workers, 16 KiB objects: inline plain values 6142 PUT/s, database 1889 MiB; inline with
+RocksDB BlobDB (`min_blob_size` 4096) 5479 PUT/s with a 1.36 s p99.9 and 2209 MiB; no inline 4219 PUT/s. BlobDB
+was rejected. Not measured: write amplification over hours of sustained writing, when compaction of the LSM
+levels has to rewrite the inline values; watch disk write volume against payload on a long run before raising
+the threshold.

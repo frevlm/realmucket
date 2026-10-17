@@ -11,6 +11,8 @@ Result<Options> load_options(const EnvLookup& env) {
                          options.part_size);
         !s)
         return std::unexpected(s.error());
+    if (auto s = env_u64(env, "RMK_INLINE_MAX_BYTES", 0, std::uint64_t{1} << 20, options.inline_max_bytes); !s)
+        return std::unexpected(s.error());
     if (auto s = env_seconds(env, "RMK_PENDING_UPLOAD_RETENTION_SECONDS", std::chrono::seconds{60},
                              options.pending_upload_retention);
         !s)

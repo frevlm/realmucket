@@ -1,3 +1,4 @@
+#include <cstring>
 #include <random>
 #include <set>
 
@@ -33,7 +34,7 @@ std::string be64(std::uint64_t v) {
 std::string describe(const BucketRef& b) { return b.tenant + "/" + b.bucket; }
 std::string describe(const ObjectRef& r) { return describe(r.bucket) + "/" + r.key; }
 
-// Every key of the MetaStore (docs/fdb-layout.md).
+// Every key of the MetaStore (docs/metadata-layout.md).
 struct Keys {
     const std::string& p;
 
@@ -68,6 +69,8 @@ struct Keys {
     std::string upload_by_bucket(const BucketRef& b, UploadId id) const { return in_bucket(kUploadByBucket, b) + be64(id); }
     std::string garbage(std::uint64_t id) const { return space(kGarbage) + be64(id); }
     std::string chunk(ChunkId id) const { return space(kChunkExtent) + be64(id); }
+    std::string inline_blob(std::uint64_t id) const { return space(kInlineBlob) + be64(id); }
+    std::string inline_seq() const { return space(kInlineSeq); }
 
 private:
     std::string with(Tag tag, std::string_view s) const {
@@ -316,9 +319,16 @@ std::uint64_t garbage_id() {
     return (static_cast<std::uint64_t>(seconds) << 24) | (random_u64() & 0xFFFFFF);
 }
 
+// Inline bytes have nothing to collect: they go with the record that pointed at them.
 Status add_garbage(Txn& tx, const Keys& k, const std::vector<Extent>& extents) {
     std::set<std::uint64_t> drawn;
-    std::vector<Extent> pending = extents;
+    std::vector<Extent> pending;
+    for (const Extent& e : extents) {
+        if (e.chunk_id == kInlineChunk)
+            tx.clear(k.inline_blob(e.offset));
+        else
+            pending.push_back(e);
+    }
     while (!pending.empty()) {
         std::vector<std::string> keys;
         for (std::size_t i = 0; i < pending.size(); ++i) {
@@ -356,8 +366,9 @@ void write_version(Txn& tx, const Keys& k, const ObjectMeta& meta) {
     tx.set_stamped_key(stamp_key(k, kVersionRef, stamp), at, encode_ref(meta.ref));
     for (const Part& part : meta.parts) {
         tx.set_stamped_key(part_key(k, stamp, part.number), at, encode_part(part));
-        tx.set_stamped_key(chunk_extent_key(k, part.extent.chunk_id, stamp, part.number), k.chunk(0).size(),
-                           encode_extent(part.extent));
+        if (part.extent.chunk_id != kInlineChunk)
+            tx.set_stamped_key(chunk_extent_key(k, part.extent.chunk_id, stamp, part.number), k.chunk(0).size(),
+                               encode_extent(part.extent));
     }
     std::string head = k.object(kHead, meta.ref);
     tx.set_stamped_value(head, encode_head(stamp, meta.delete_marker), 0);
@@ -466,6 +477,9 @@ public:
     Result<UploadId> begin_upload(const ObjectRef& target, const Encryption& encryption,
                                   Clock::time_point now) override;
     Status put_part(UploadId id, const Part& part, Clock::time_point now) override;
+    Result<Part> put_inline_part(UploadId id, const Part& part, std::span<const std::byte> bytes,
+                                 Clock::time_point now) override;
+    Result<std::vector<std::byte>> read_inline(const Extent& extent) override;
     Result<PendingUpload> get_upload(UploadId id, Clock::time_point now) override;
     Status abort_upload(UploadId id) override;
     Result<Generation> commit_upload(UploadId id, const Precondition& precondition,
@@ -494,6 +508,8 @@ public:
                   const Encryption& to) override;
 
 private:
+    Status put_part_in(Txn& tx, const Keys& k, UploadId id, const Part& part, Clock::time_point now);
+
     std::shared_ptr<Database> db_;
     std::string prefix_;  // empty: the database holds nothing else
     std::chrono::seconds retention_;
@@ -677,42 +693,77 @@ Result<UploadId> RocksMetaStore::begin_upload(const ObjectRef& target, const Enc
 // Parallel put_part calls on one upload do not conflict: the deadline is read without a
 // conflict range, so racing calls may each leave a deadline index entry; reclaim_expired
 // drops the stale ones.
+Status RocksMetaStore::put_part_in(Txn& tx, const Keys& k, UploadId id, const Part& part, Clock::time_point now) {
+    auto header = tx.get(k.upload_header(id));
+    if (!header) return std::unexpected(header.error());
+    if (!*header) return fail(Errc::not_found, "no such upload");
+    auto deadline_value = tx.get(k.upload_deadline(id), true);
+    if (!deadline_value) return std::unexpected(deadline_value.error());
+    if (!*deadline_value) return corrupt("upload without deadline");
+    Reader r(**deadline_value);
+    Clock::time_point deadline = r.time();
+    if (!r.ok()) return corrupt("upload deadline");
+    if (deadline <= now) return fail(Errc::expired, "upload expired");
+    if (part.number == 0 || part.number > kMaxParts)
+        return fail(Errc::invalid_argument, "part numbers run from 1 to kMaxParts");
+
+    std::string key = k.upload_part(id, part.number);
+    auto existing = tx.get(key);
+    if (!existing) return std::unexpected(existing.error());
+    if (*existing) {
+        auto old = decode_part(part.number, **existing);
+        if (!old) return corrupt("upload part");
+        // A retry after commit_unknown_result finds its own Extent here: not garbage.
+        if (old->extent != part.extent)
+            if (auto s = add_garbage(tx, k, {old->extent}); !s) return s;
+        if (old->extent.chunk_id != kInlineChunk) tx.clear(k.pending_in_chunk(id, *old));
+    }
+    tx.set(key, encode_part(part));
+    if (part.extent.chunk_id != kInlineChunk) tx.set(k.pending_in_chunk(id, part), "");
+    Clock::time_point next = now + retention_;
+    if (next != deadline) {
+        tx.clear(k.deadline(deadline, id));
+        tx.set(k.deadline(next, id), "");
+        tx.set(k.upload_deadline(id), Writer().time(next).take());
+    }
+    return {};
+}
+
 Status RocksMetaStore::put_part(UploadId id, const Part& part, Clock::time_point now) {
     Keys k{prefix_};
-    return write(*db_, Database::Durability::lazy, [&](Txn& tx) -> Status {
-        auto header = tx.get(k.upload_header(id));
-        if (!header) return std::unexpected(header.error());
-        if (!*header) return fail(Errc::not_found, "no such upload");
-        auto deadline_value = tx.get(k.upload_deadline(id), true);
-        if (!deadline_value) return std::unexpected(deadline_value.error());
-        if (!*deadline_value) return corrupt("upload without deadline");
-        Reader r(**deadline_value);
-        Clock::time_point deadline = r.time();
-        if (!r.ok()) return corrupt("upload deadline");
-        if (deadline <= now) return fail(Errc::expired, "upload expired");
-        if (part.number == 0 || part.number > kMaxParts)
-            return fail(Errc::invalid_argument, "part numbers run from 1 to kMaxParts");
+    return write(*db_, Database::Durability::lazy, [&](Txn& tx) -> Status { return put_part_in(tx, k, id, part, now); });
+}
 
-        std::string key = k.upload_part(id, part.number);
-        auto existing = tx.get(key);
-        if (!existing) return std::unexpected(existing.error());
-        if (*existing) {
-            auto old = decode_part(part.number, **existing);
-            if (!old) return corrupt("upload part");
-            // A retry after commit_unknown_result finds its own Extent here: not garbage.
-            if (old->extent != part.extent)
-                if (auto s = add_garbage(tx, k, {old->extent}); !s) return s;
-            tx.clear(k.pending_in_chunk(id, *old));
-        }
-        tx.set(key, encode_part(part));
-        tx.set(k.pending_in_chunk(id, part), "");
-        Clock::time_point next = now + retention_;
-        if (next != deadline) {
-            tx.clear(k.deadline(deadline, id));
-            tx.set(k.deadline(next, id), "");
-            tx.set(k.upload_deadline(id), Writer().time(next).take());
-        }
-        return {};
+// The blob id comes from a counter in the database, so ids are never reused; the single writer
+// thread makes the read-modify-write safe.
+Result<Part> RocksMetaStore::put_inline_part(UploadId id, const Part& part, std::span<const std::byte> bytes,
+                                             Clock::time_point now) {
+    Keys k{prefix_};
+    return write(*db_, Database::Durability::lazy, [&](Txn& tx) -> Result<Part> {
+        auto seq = tx.get(k.inline_seq());
+        if (!seq) return std::unexpected(seq.error());
+        const std::uint64_t blob = (*seq ? from_le64(**seq) : 0) + 1;
+        Part stored = part;
+        stored.extent = Extent{kInlineChunk, blob, bytes.size(), part.extent.crc32c};
+        if (auto ok = put_part_in(tx, k, id, stored, now); !ok) return std::unexpected(ok.error());
+        tx.set(k.inline_seq(), le64(blob));
+        tx.set(k.inline_blob(blob), std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+        return stored;
+    });
+}
+
+Result<std::vector<std::byte>> RocksMetaStore::read_inline(const Extent& extent) {
+    Keys k{prefix_};
+    return read(*db_, [&](Txn& tx) -> Result<std::vector<std::byte>> {
+        if (extent.chunk_id != kInlineChunk) return fail(Errc::invalid_argument, "not an inline extent");
+        auto v = tx.get(k.inline_blob(extent.offset));
+        if (!v) return std::unexpected(v.error());
+        if (!*v || (*v)->size() != extent.length)
+            return fail(Errc::not_found, "inline bytes " + std::to_string(extent.offset) + " are gone");
+        std::vector<std::byte> out(extent.length);
+        std::memcpy(out.data(), (*v)->data(), out.size());
+        if (crc32c(out) != extent.crc32c) return fail(Errc::corruption, "inline bytes fail their checksum");
+        return out;
     });
 }
 

@@ -231,10 +231,27 @@ TEST_F(RealmucketdTest, TwoDaemonsCannotShareADataDirectory) {
     take(client->create_tenant("rec"));
 }
 
+TEST_F(RealmucketdTest, SmallObjectsLiveInTheDatabaseAndSurviveARestart) {
+    stop();
+    start(true);  // metadata flushed on every commit, as in production
+    take(client->create_tenant("rec"));
+    take(client->create_bucket("rec", "data"));
+    std::map<std::string, std::string> written;
+    for (int i = 0; i < 20; ++i) {
+        const std::string key = "k" + std::to_string(i);
+        written[key] = pattern(100 + static_cast<std::size_t>(i) * 1000, i);
+        take(client->put({"rec", "data", key}, written[key]));
+    }
+    EXPECT_EQ(chunk_files(), 0u);  // not a byte went to a Chunk
+    stop();
+    start(true);
+    for (const auto& [key, content] : written) EXPECT_EQ(take(client->get({"rec", "data", key})), content) << key;
+}
+
 TEST_F(RealmucketdTest, ChunkFilesWithoutADatabaseAreNotTouched) {
     take(client->create_tenant("rec"));
     take(client->create_bucket("rec", "data"));
-    take(client->put({"rec", "data", "k"}, "value"));
+    take(client->put({"rec", "data", "k"}, std::string(40 * kKiB, 'v')));  // too big to be kept inline
     stop();
     ASSERT_GE(chunk_files(), 1u);
 

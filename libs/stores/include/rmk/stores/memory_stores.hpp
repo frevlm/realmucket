@@ -34,6 +34,9 @@ public:
     Result<UploadId> begin_upload(const ObjectRef& target, const Encryption& encryption,
                                   Clock::time_point now) override;
     Status put_part(UploadId id, const Part& part, Clock::time_point now) override;
+    Result<Part> put_inline_part(UploadId id, const Part& part, std::span<const std::byte> bytes,
+                                 Clock::time_point now) override;
+    Result<std::vector<std::byte>> read_inline(const Extent& extent) override;
     Result<PendingUpload> get_upload(UploadId id, Clock::time_point now) override;
     Status abort_upload(UploadId id) override;
     Result<Generation> commit_upload(UploadId id, const Precondition& precondition,
@@ -65,7 +68,8 @@ private:
     using Versions = std::map<Generation, ObjectMeta>;
 
     // Callers hold mutex_.
-    void add_garbage_locked(const Extent& extent);
+    void add_garbage_locked(const Extent& extent);  // inline bytes are simply dropped
+    Status put_part_locked(UploadId id, const Part& part, Clock::time_point now);
     void release_version_locked(const ObjectMeta& version);
 
     std::mutex mutex_;
@@ -75,6 +79,8 @@ private:
     std::map<ObjectRef, Versions> objects_;
     std::map<UploadId, PendingUpload> uploads_;
     std::map<std::uint64_t, GarbageEntry> garbage_;
+    std::map<std::uint64_t, std::vector<std::byte>> inline_;
+    std::uint64_t last_inline_ = 0;
     Generation last_generation_ = 0;
     UploadId last_upload_ = 0;
     std::uint64_t last_garbage_ = 0;

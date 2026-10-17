@@ -73,6 +73,10 @@ struct BucketInfo {
 // Objects
 
 // A contiguous byte range inside one Chunk. Offsets are chunk-file offsets (header included).
+// An Extent with this chunk id is not in a Chunk: its bytes are stored inside the metadata
+// (MetaStore::put_inline_part), and `offset` names them.
+inline constexpr ChunkId kInlineChunk = 0;
+
 struct Extent {
     ChunkId chunk_id = 0;
     std::uint64_t offset = 0;

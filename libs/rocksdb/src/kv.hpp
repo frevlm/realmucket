@@ -1,7 +1,7 @@
 #pragma once
 
 // Private to src/: key and value encoding, and the transaction interface the stores are written
-// against. The layout is docs/fdb-layout.md; a transaction here is one logical operation run by the
+// against. The layout is docs/metadata-layout.md; a transaction here is one logical operation run by the
 // single writer (or a read-only view on a snapshot).
 
 #include <array>
@@ -21,7 +21,7 @@
 
 namespace rmk::rocks {
 
-// One byte names each subspace (docs/fdb-layout.md).
+// One byte names each subspace (docs/metadata-layout.md).
 enum Tag : char {
     kTenant = 'T',
     kUsage = 'u',
@@ -38,6 +38,8 @@ enum Tag : char {
     kGarbage = 'G',
     kClusterConfig = 'K',
     kGeneration = 'Z',
+    kInlineBlob = 'I',  // bytes of inline Parts, by blob id
+    kInlineSeq = 'J',   // the last blob id handed out
 };
 
 // A version is named by the stamp of the transaction that wrote it: the Generation (8 bytes,

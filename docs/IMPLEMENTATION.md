@@ -119,17 +119,23 @@ listening port.
 1. Check the Tenant is named and the minimum SDK version, load the Bucket.
 2. `crypto::new_data_key`, then `begin_upload` with the wrapped key.
 3. Cut the content into Parts of `RMK_PART_SIZE` (single `PutObject` streams too). Per Part:
-   encrypt, then `local::ChunkStore::write`, which appends to the one open Chunk, starts a new
-   Chunk when the Part does not fit, and returns only after the bytes are flushed. Writers in
-   flight together share flushes (group commit, `docs/PERFORMANCE.md`).
-4. `put_part` with the resulting Extent; finally `commit_upload` with the Precondition. The
-   metadata commit is flushed to disk before it returns (only tests turn that off).
+   encrypt, then place the stored bytes:
+   - **inline** when they are at most `RMK_INLINE_MAX_BYTES` (default 32 KiB, 0 turns it off):
+     `MetaStore::put_inline_part` stores them in the metadata database in the same transaction that
+     registers the Part (`docs/metadata-layout.md`);
+   - otherwise `local::ChunkStore::write`, which appends to the one open Chunk, starts a new Chunk when
+     the Part does not fit, and returns only after the bytes are flushed. Writers in flight together
+     share flushes (group commit, `docs/PERFORMANCE.md`). Then `put_part` registers the Extent.
+4. `commit_upload` with the Precondition. The metadata commit is flushed to disk before it returns (only
+   tests turn that off). For an object made only of inline Parts that one flush covers bytes and
+   metadata, so a small PUT costs one flush instead of two.
 
-The order is fixed: metadata never points at bytes that are not on disk.
+The order is fixed: metadata never points at bytes that are not on disk. An inline Extent has
+`chunk_id == 0`; no Chunk, garbage queue, compaction or `relocate_part` ever sees it.
 
 ### Reading
 
-`ChunkStore::read` verifies `Extent.crc32c`; a mismatch is `corruption`. A ranged GET decrypts every
+`ChunkStore::read` (or `MetaStore::read_inline` for an inline Extent) verifies `Extent.crc32c`; a mismatch is `corruption`. A ranged GET decrypts every
 Part it overlaps in full (GCM authenticates whole Parts).
 
 ### Background (realmucketd maintenance thread)
@@ -182,6 +188,7 @@ Every process logs one line per event to stderr: `<RFC3339 time> <level> <compon
 | `RMK_CHUNK_CAPACITY_BYTES` | 1 GiB; a Part plus encryption overhead must fit in one chunk |
 | `RMK_TLS_CERT`, `RMK_TLS_KEY`, `RMK_TLS_CA`, `RMK_INSECURE` | TLS required unless `RMK_INSECURE=true` (`rpc::load_tls`) |
 | `RMK_PART_SIZE`, `RMK_MAX_PART_BYTES`, `RMK_MAX_BUFFERED_BYTES` | 64 MiB, 256 MiB, 2 GiB |
+| `RMK_INLINE_MAX_BYTES` | 32 KiB; stored Parts up to this size live in the metadata database. Setting 0 stops creating them; existing ones stay readable. Do not hand a database that holds inline Parts to a build without this feature |
 | `RMK_PENDING_UPLOAD_RETENTION_SECONDS` | 7 days |
 | `RMK_MAINTENANCE_INTERVAL_SECONDS`, `RMK_COMPACTION_GARBAGE_PERCENT`, `RMK_COMPACTION_BYTES_PER_SECOND`, `RMK_COMPACTION_GRACE_SECONDS`, `RMK_REWRAP_BATCH` | `5`, `50`, 50 MiB, `600`, `1000` |
 

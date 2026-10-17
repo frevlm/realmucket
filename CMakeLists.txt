@@ -182,7 +182,7 @@ if(RMK_BUILD_TESTS)
         target_include_directories(rmk_${name}_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
         target_compile_options(rmk_${name}_tests PRIVATE -Wall -Wextra -Werror)
         target_link_libraries(rmk_${name}_tests PRIVATE ${ARGN} GTest::gtest_main)
-        gtest_discover_tests(rmk_${name}_tests DISCOVERY_TIMEOUT 30)
+        gtest_discover_tests(rmk_${name}_tests DISCOVERY_TIMEOUT 30 DISCOVERY_MODE PRE_TEST)
     endfunction()
 
     rmk_tests(core libs/core/test rmk_core)

@@ -13,6 +13,7 @@
 #include "store_contract/common.hpp"
 #include "store_contract/config_contract.hpp"
 #include "store_contract/meta_basic_contract.hpp"
+#include "store_contract/meta_inline_contract.hpp"
 #include "store_contract/meta_maintenance_contract.hpp"
 #include "store_contract/meta_objects_contract.hpp"
 
