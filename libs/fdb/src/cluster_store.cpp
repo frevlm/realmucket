@@ -35,7 +35,7 @@ std::string encode_node(const NodeInfo& n) {
     return Writer()
         .str(n.id)
         .str(n.address)
-        .str(n.k8s_node)
+        .str(n.host)
         .str(n.zone)
         .u64(n.capacity_bytes)
         .u64(n.used_bytes)
@@ -48,7 +48,7 @@ std::optional<NodeInfo> decode_node(std::string_view v) {
     NodeInfo n;
     n.id = r.str();
     n.address = r.str();
-    n.k8s_node = r.str();
+    n.host = r.str();
     n.zone = r.str();
     n.capacity_bytes = r.u64();
     n.used_bytes = r.u64();

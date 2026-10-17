@@ -10,7 +10,7 @@ class ClusterStoreContract : public ::testing::TestWithParam<rmk::contract::Stor
 protected:
     void SetUp() override {
         rmk::contract::StoreSet set = GetParam()(std::chrono::hours(1));
-        if (!set.meta) GTEST_SKIP() << "store unavailable";
+        if (!set.meta || !set.cluster) GTEST_SKIP() << "store unavailable";
         store = set.cluster;
     }
 
@@ -18,7 +18,7 @@ protected:
         rmk::NodeInfo n;
         n.id = std::move(id);
         n.address = n.id + ".svc:7001";
-        n.k8s_node = "machine-" + n.id;
+        n.host = "machine-" + n.id;
         n.zone = std::move(zone);
         n.capacity_bytes = 1000;
         n.used_bytes = 100;
